@@ -1,9 +1,7 @@
 import express from 'express';
 import db from '../database.js'
-import bcrypt from 'bcrypt';
 
 const router = express.Router();
-const saltRounds = 10;
 
 const VALID_ROLES = new Set(['ANALYST', 'MANAGER']);
 
@@ -21,11 +19,11 @@ function badRequest(res, message) {
 
 // Create user
 router.post('/', (req, res) => {
-    const { email, password, role, locked } = req.body;
+    const { email, password_hash, role, locked } = req.body;
     const normalizedLocked = normalizeLocked(locked ?? 0);
 
-    if (!email || !password || !role) {
-        return badRequest(res, 'email, password and role are required');
+    if (!email || !password_hash || !role) {
+        return badRequest(res, 'email, password_hash and role are required');
     }
     if (!VALID_ROLES.has(role)) {
         return badRequest(res, 'role must be ANALYST or MANAGER');
@@ -34,29 +32,17 @@ router.post('/', (req, res) => {
         return badRequest(res, 'locked must be 0/1 or boolean');
     }
 
-    try {
-        const hash = await bcrypt.hash(password, saltRounds);
+    const sql = 'INSERT INTO users (email, password_hash, role, locked) VALUES (?, ?, ?, ?)';
 
-        const sql = 'INSERT INTO users (email, password_hash, role, locked) VALUES (?, ?, ?, ?)';
-        
-        db.run(sql, [email, hash, role, normalizedLocked], function (err) {
-            if (err) {
-                if (err.message.includes('UNIQUE constraint failed')) {
-                    return res.status(400).json({ error: 'Email already exists' });
-                }
-                return res.status(500).json({ error: err.message });
-            }
-
-            res.status(201).json({
-                id: this.lastID,
-                email,
-                role,
-                locked: normalizedLocked
-            });
+    db.run(sql, [email, password_hash, role, normalizedLocked], function (err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.status(201).json({
+            id: this.lastID,
+            email,
+            role,
+            locked: normalizedLocked
         });
-    } catch (err) {
-        return res.status(500).json({ error: 'Encryption failed' });
-    }
+    });
 });
 
 // Read all users
@@ -81,7 +67,7 @@ router.get('/:id(\\d+)', (req, res) => {
 // Update user
 router.put('/:id(\\d+)', (req, res) => {
     const userId = Number(req.params.id);
-    const { email, role, locked } = req.body;
+    const { email, password_hash, role, locked } = req.body;
 
     const fields = [];
     const values = [];
@@ -89,6 +75,10 @@ router.put('/:id(\\d+)', (req, res) => {
     if (email !== undefined) {
         fields.push('email = ?');
         values.push(email);
+    }
+    if (password_hash !== undefined) {
+        fields.push('password_hash = ?');
+        values.push(password_hash);
     }
     if (role !== undefined) {
         if (!VALID_ROLES.has(role)) {
