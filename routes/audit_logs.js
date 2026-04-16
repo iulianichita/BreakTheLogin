@@ -48,7 +48,7 @@ router.get('/', (req, res) => {
 });
 
 // Read one audit log
-router.get('//:id(\\d+)', (req, res) => {
+router.get('/:id', (req, res) => {
     const logId = Number(req.params.id);
 
     db.get('SELECT * FROM audit_logs WHERE id = ?', [logId], (err, row) => {
@@ -59,7 +59,7 @@ router.get('//:id(\\d+)', (req, res) => {
 });
 
 // Update audit log
-router.put('/:id(\\d+)', (req, res) => {
+router.put('/:id', (req, res) => {
     const logId = Number(req.params.id);
     const { user_id, action, resource, resource_id, ip_address } = req.body;
 
@@ -108,7 +108,7 @@ router.put('/:id(\\d+)', (req, res) => {
 });
 
 // Delete audit log
-router.delete('/:id(\\d+)', (req, res) => {
+router.delete('/:id', (req, res) => {
     const logId = Number(req.params.id);
 
     db.run('DELETE FROM audit_logs WHERE id = ?', [logId], function (err) {

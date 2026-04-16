@@ -54,7 +54,7 @@ router.get('/', (req, res) => {
 });
 
 // Read one user
-router.get('/:id(\\d+)', (req, res) => {
+router.get('/:id', (req, res) => {
     const userId = Number(req.params.id);
 
     db.get('SELECT * FROM users WHERE id = ?', [userId], (err, row) => {
@@ -65,7 +65,7 @@ router.get('/:id(\\d+)', (req, res) => {
 });
 
 // Update user
-router.put('/:id(\\d+)', (req, res) => {
+router.put('/:id', (req, res) => {
     const userId = Number(req.params.id);
     const { email, password_hash, role, locked } = req.body;
 
@@ -111,7 +111,7 @@ router.put('/:id(\\d+)', (req, res) => {
 });
 
 // Delete user
-router.delete('/:id(\\d+)', (req, res) => {
+router.delete('/:id', (req, res) => {
     const userId = Number(req.params.id);
 
     db.run('DELETE FROM users WHERE id = ?', [userId], function (err) {

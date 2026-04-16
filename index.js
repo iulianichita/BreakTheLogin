@@ -16,8 +16,24 @@ app.use('/api/user', userRoutes);
 app.use('/api/tickets', ticketsRoutes);
 app.use('/api/auditlogs', auditLogsRoutes);
 
-app.get('/', (req, res) => {
+app.get('/login', (req, res) => {
     res.sendFile(path.join(__dirname, './templates/login.html'));
+});
+
+app.get('/users', (req, res) => {
+    res.sendFile(path.join(__dirname, './templates/users.html'));
+});
+
+app.get('/register', (req, res) => {
+    res.sendFile(path.join(__dirname, './templates/register.html'));
+});
+
+app.get('/forgotpassword', (req, res) => {
+    res.sendFile(path.join(__dirname, './templates/forgotpassword.html'));
+});
+
+app.get('/tickets', (req, res) => {
+    res.sendFile(path.join(__dirname, './templates/tickets.html'));
 });
 
 app.listen(port, () => {

@@ -57,7 +57,7 @@ router.get('/', (req, res) => {
 });
 
 // Read one ticket
-router.get('/:id(\\d+)', (req, res) => {
+router.get('/:id', (req, res) => {
     const ticketId = Number(req.params.id);
 
     db.get('SELECT * FROM tickets WHERE id = ?', [ticketId], (err, row) => {
@@ -68,7 +68,7 @@ router.get('/:id(\\d+)', (req, res) => {
 });
 
 // Update ticket
-router.put('/:id(\\d+)', (req, res) => {
+router.put('/:id', (req, res) => {
     const ticketId = Number(req.params.id);
     const { title, description, severity, status, owner_id } = req.body;
 
@@ -123,7 +123,7 @@ router.put('/:id(\\d+)', (req, res) => {
 });
 
 // Delete ticket
-router.delete('/:id(\\d+)', (req, res) => {
+router.delete('/:id', (req, res) => {
     const ticketId = Number(req.params.id);
 
     db.run('DELETE FROM tickets WHERE id = ?', [ticketId], function (err) {

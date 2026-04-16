@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>App SQLite</title>
+</head>
+<body>
+    <h1>Lista Utilizatori</h1>
+    <ul id="userList"></ul>
+
+    <script>
+        // Functie care ia datele din baza de date via API
+        async function loadUsers() {
+            const response = await fetch('/api/user');
+            const users = await response.json();
+            
+            const list = document.getElementById('userList');
+            list.innerHTML = ''; 
+
+            users.forEach(user => {
+                const li = document.createElement('li');
+                li.textContent = `${user.email} (${user.role})`;
+                list.appendChild(li);
+            });
+        }
+
+        loadUsers();
+    </script>
+</body>
+</html>
