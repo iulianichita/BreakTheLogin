@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Express App</title>
+    <title>Login</title>
     <style>
         :root {
             --primary-gradient: linear-gradient(135deg, #5c75f6 0%, #273fb7 99%, #271a7d 100%);
@@ -148,13 +148,35 @@
 </div>
 
 <script>
-    // Logica de fetch ramane aceeasi
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
         e.preventDefault();
         const formData = new FormData(e.target);
         const data = Object.fromEntries(formData.entries());
-        console.log('Date pregatite pentru SQLite:', data);
-        // Aici pui fetch('/api/login', { method: 'POST', ... })
+        
+        try {
+            const response = await fetch(`/api/user/login`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    email: data.email,
+                    password_hash: data.password
+                })
+            });
+
+            const result = await response.json();
+
+            if (response.ok) {
+                console.log('Success:', result);
+                window.location.href = '/profile';
+            } else {
+                console.error('Server error:', result.error);
+                alert('Error: ' + (result.error || 'Something went wrong.'));
+            }
+        } catch (error) {
+            console.error('Error:', error);
+        }
     });
 </script>
 

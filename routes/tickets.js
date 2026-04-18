@@ -1,5 +1,6 @@
 import express from 'express';
-import db from '../database.js'
+import db from '../database.js';
+import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
@@ -13,6 +14,22 @@ function badRequest(res, message) {
 
 // Create ticket
 router.post('/', (req, res) => {
+    const token = req.cookies.auth_token;
+
+    if (!token) return res.status(401).json({ error: 'Login required' });
+
+    let decoded;
+    try {
+        decoded = jwt.verify(token, 'abc');
+    } catch (err) {
+        console.log('JWT error:', err.message);
+        return res.status(401).json({ error: 'Invalid token' });
+    }
+
+    if (decoded.manager !== true) {
+        return res.status(403).json({ error: 'Only managers can create tickets' });
+    }
+
     const { title, description, severity, status, owner_id } = req.body;
 
     if (!title || !severity || !status) {
@@ -25,7 +42,9 @@ router.post('/', (req, res) => {
         return badRequest(res, 'status must be OPEN, IN_PROGRESS or RESOLVED');
     }
 
-    const ownerIdValue = owner_id === undefined || owner_id === null ? null : Number(owner_id);
+    const ownerIdValue = owner_id === undefined || owner_id === null || owner_id === ''
+        ? decoded.userId
+        : Number(owner_id);
     if (ownerIdValue !== null && Number.isNaN(ownerIdValue)) {
         return badRequest(res, 'owner_id must be a number');
     }
@@ -48,12 +67,50 @@ router.post('/', (req, res) => {
     });
 });
 
-// Read all tickets
+
+// Read tickets
 router.get('/', (req, res) => {
-    db.all('SELECT * FROM tickets ORDER BY id DESC', [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows);
-    });
+    const token = req.cookies.auth_token;
+
+    if (!token) return res.status(401).json({ error: "Login required" });
+
+    try {
+        const decoded = jwt.verify(token, 'abc');
+
+        if (decoded.manager == true){
+            db.all(`
+                SELECT
+                    tickets.id,
+                    tickets.title,
+                    tickets.description,
+                    tickets.severity,
+                    tickets.status,
+                    tickets.owner_id,
+                    tickets.created_at,
+                    tickets.updated_at,
+                    users.email AS owner_email
+                FROM tickets
+                LEFT JOIN users ON users.id = tickets.owner_id
+                ORDER BY tickets.created_at DESC
+            `, [], async (err, tickets) => {
+                if (err) return res.status(500).json({ error: err.message });
+
+                res.json(tickets);
+            });
+        }
+        else {
+            db.all('SELECT * FROM tickets WHERE owner_id = ?', [decoded.userId], async (err, tickets) => {
+                if (err) return res.status(500).json({ error: err.message });
+
+                res.json(tickets);
+            });
+        }
+
+    } catch (err) {
+        console.log("JWT error:", err.message);
+        res.status(401).json({ error: "Invalid token" });
+    }
+    
 });
 
 // Read one ticket
@@ -69,7 +126,36 @@ router.get('/:id', (req, res) => {
 
 // Update ticket
 router.put('/:id', (req, res) => {
+    const token = req.cookies.auth_token;
+    if (!token) return res.status(401).json({ error: 'Login required' });
+
+    let decoded;
+    try {
+        decoded = jwt.verify(token, 'abc');
+    } catch (err) {
+        return res.status(401).json({ error: 'Invalid token' });
+    }
+
     const ticketId = Number(req.params.id);
+    if (Number.isNaN(ticketId)) {
+        return badRequest(res, 'id must be a number');
+    }
+
+    db.get('SELECT owner_id FROM tickets WHERE id = ?', [ticketId], (findErr, ticketRow) => {
+        if (findErr) return res.status(500).json({ error: findErr.message });
+        if (!ticketRow) return res.status(404).json({ error: 'Ticket not found' });
+
+        const isManager = decoded.manager === true;
+        const isOwner = ticketRow.owner_id === decoded.userId;
+
+        if (!isManager && !isOwner) {
+            return res.status(403).json({ error: 'You can only edit your own tickets' });
+        }
+
+        if (!isManager && req.body.owner_id !== undefined) {
+            return res.status(403).json({ error: 'Only managers can reassign tickets' });
+        }
+
     const { title, description, severity, status, owner_id } = req.body;
 
     const fields = [];
@@ -119,6 +205,7 @@ router.put('/:id', (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Ticket not found' });
         res.json({ updatedID: ticketId });
+    });
     });
 });
 

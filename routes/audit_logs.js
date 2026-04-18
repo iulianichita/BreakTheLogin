@@ -1,5 +1,6 @@
 import express from 'express';
-import db from '../database.js'
+import db from '../database.js';
+import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
@@ -41,15 +42,33 @@ router.post('/', (req, res) => {
 
 // Read all audit logs
 router.get('/', (req, res) => {
-    db.all('SELECT * FROM audit_logs ORDER BY id DESC', [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows);
-    });
+    const token = req.cookies.auth_token;
+    
+    if (!token) return res.status(401).json({ error: 'Login required' });
+
+    try {
+        const decoded = jwt.verify(token, 'abc');
+
+        if (decoded.manager !== true) {
+            return res.status(403).json({ error: 'Only managers can view audit logs' });
+        }
+
+        db.all('SELECT * FROM audit_logs ORDER BY id DESC', [], (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json(rows);
+        });
+    } catch (err) {
+        res.status(401).json({ error: 'Invalid token' });
+    }
 });
 
 // Read one audit log
 router.get('/:id', (req, res) => {
     const logId = Number(req.params.id);
+
+    if (Number.isNaN(logId)) {
+        return badRequest(res, 'id must be a number');
+    }
 
     db.get('SELECT * FROM audit_logs WHERE id = ?', [logId], (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
@@ -61,6 +80,10 @@ router.get('/:id', (req, res) => {
 // Update audit log
 router.put('/:id', (req, res) => {
     const logId = Number(req.params.id);
+    if (Number.isNaN(logId)) {
+        return badRequest(res, 'id must be a number');
+    }
+
     const { user_id, action, resource, resource_id, ip_address } = req.body;
 
     const fields = [];
@@ -110,6 +133,10 @@ router.put('/:id', (req, res) => {
 // Delete audit log
 router.delete('/:id', (req, res) => {
     const logId = Number(req.params.id);
+
+    if (Number.isNaN(logId)) {
+        return badRequest(res, 'id must be a number');
+    }
 
     db.run('DELETE FROM audit_logs WHERE id = ?', [logId], function (err) {
         if (err) return res.status(500).json({ error: err.message });

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import userRoutes from './routes/users.js';
 import ticketsRoutes from './routes/tickets.js';
 import auditLogsRoutes from './routes/audit_logs.js';
+import cookieParser from 'cookie-parser';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,9 +13,14 @@ const app = express();
 const port = 3000;
 
 app.use(express.json());
+app.use(cookieParser());
 app.use('/api/user', userRoutes);
 app.use('/api/tickets', ticketsRoutes);
 app.use('/api/auditlogs', auditLogsRoutes);
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, './templates/login.html'));
+});
 
 app.get('/login', (req, res) => {
     res.sendFile(path.join(__dirname, './templates/login.html'));
@@ -32,8 +38,8 @@ app.get('/forgotpassword', (req, res) => {
     res.sendFile(path.join(__dirname, './templates/forgotpassword.html'));
 });
 
-app.get('/tickets', (req, res) => {
-    res.sendFile(path.join(__dirname, './templates/tickets.html'));
+app.get('/profile', (req, res) => {
+    res.sendFile(path.join(__dirname, './templates/profile.html'));
 });
 
 app.listen(port, () => {

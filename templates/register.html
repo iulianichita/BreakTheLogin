@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Express App</title>
+    <title>Register</title>
     <style>
         :root {
             --primary-gradient: linear-gradient(135deg, #5c75f6 0%, #273fb7 99%, #271a7d 100%);
@@ -98,7 +98,6 @@
             -webkit-appearance: none;
             -moz-appearance: none;
             
-            /* sageata custom */
             background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235c75f6' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
             background-repeat: no-repeat;
             background-position: right 1.2rem center;
@@ -176,7 +175,7 @@
         </div>
         <div class="form-group">
             <label>Password</label>
-            <input type="password" name="password" placeholder="••••••••" required>
+            <input type="password" name="password_hash" placeholder="••••••••" required>
         </div>
         <div class="form-group">
             <label>Role</label>
@@ -195,13 +194,34 @@
 </div>
 
 <script>
-    // Logica de fetch ramane aceeasi
     document.getElementById('registerForm').addEventListener('submit', async (e) => {
         e.preventDefault();
+
         const formData = new FormData(e.target);
         const data = Object.fromEntries(formData.entries());
-        console.log('Date pregatite pentru SQLite:', data);
-        // Aici pui fetch('/api/login', { method: 'POST', ... })
+
+        try {
+            const response = await fetch('/api/user/register', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            });
+
+            const result = await response.json();
+
+            if (response.ok) {
+                console.log('Success:', result);
+                window.location.href = '/login';
+            } else {
+                console.error('Server error:', result.error);
+                alert('Error: ' + (result.error || 'Something went wrong.'));
+            }
+        } catch (error) {
+            console.error('Error:', error);
+        }
+
     });
 </script>
 
