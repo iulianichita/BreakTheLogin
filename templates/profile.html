@@ -205,6 +205,41 @@
             gap: 0.75rem;
         }
 
+        .tickets-tools {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .ticket-filters {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .ticket-filters select {
+            border: 1px solid #d9def0;
+            border-radius: 10px;
+            padding: 0.5rem 0.7rem;
+            font: inherit;
+            background: white;
+            color: var(--text-color);
+        }
+
+        .filter-reset-btn {
+            border: 1px solid #ccd3eb;
+            background: white;
+            color: var(--secondary-color);
+            border-radius: 10px;
+            padding: 0.5rem 0.8rem;
+            cursor: pointer;
+            font: inherit;
+            font-weight: 700;
+        }
+
         .add-ticket-btn {
             background: var(--primary-gradient);
             color: white;
@@ -379,8 +414,25 @@
     <div class="tickets-card">
         <div class="tickets-header">
             <h3>My Tickets</h3>
-            <div class="manager-actions" id="managerActions">
-                <button class="add-ticket-btn" onclick="openTicketModal()">Add Ticket</button>
+            <div class="tickets-tools">
+                <div class="ticket-filters" id="ticketFilters">
+                    <select id="statusFilter" onchange="applyTicketFilters()" aria-label="Filter by status">
+                        <option value="">All statuses</option>
+                        <option value="OPEN">Open</option>
+                        <option value="IN_PROGRESS">In progress</option>
+                        <option value="RESOLVED">Resolved</option>
+                    </select>
+                    <select id="severityFilter" onchange="applyTicketFilters()" aria-label="Filter by severity">
+                        <option value="">All severities</option>
+                        <option value="LOW">Low</option>
+                        <option value="MED">Medium</option>
+                        <option value="HIGH">High</option>
+                    </select>
+                    <button type="button" class="filter-reset-btn" onclick="resetTicketFilters()">Clear</button>
+                </div>
+                <div class="manager-actions" id="managerActions">
+                    <button class="add-ticket-btn" onclick="openTicketModal()">Add Ticket</button>
+                </div>
             </div>
         </div>
         <table id="ticketsTable">
@@ -417,7 +469,7 @@
             </thead>
             <tbody id="auditBody">
                 <tr>
-                    <td colspan="6" style="text-align:center;">LOading audit logs...</td>
+                    <td colspan="6" style="text-align:center;">Loading audit logs...</td>
                 </tr>
             </tbody>
         </table>
@@ -612,9 +664,35 @@
         document.getElementById('editProfileForm').reset();
     }
 
-    async function loadTickets(isManager = false) {
+    function buildTicketFilterQuery() {
+        const status = document.getElementById('statusFilter').value;
+        const severity = document.getElementById('severityFilter').value;
+        const query = new URLSearchParams();
+
+        if (status) {
+            query.set('status', status);
+        }
+        if (severity) {
+            query.set('severity', severity);
+        }
+
+        const queryString = query.toString();
+        return queryString ? `?${queryString}` : '';
+    }
+
+    function applyTicketFilters() {
+        loadTickets();
+    }
+
+    function resetTicketFilters() {
+        document.getElementById('statusFilter').value = '';
+        document.getElementById('severityFilter').value = '';
+        loadTickets();
+    }
+
+    async function loadTickets() {
         try {
-            const response = await fetch('/api/tickets');
+            const response = await fetch(`/api/tickets${buildTicketFilterQuery()}`);
             const tickets = await response.json();
             
             const tbody = document.getElementById('ticketsBody');
@@ -623,12 +701,12 @@
             // Daca tickets nu este un array, il transformam intr-unul sau afisam mesaj
             if (!Array.isArray(tickets)) {
                 console.error("Expected array but got:", tickets);
-                tbody.innerHTML = `<tr><td colspan="${isManager ? 6 : 5}" style="text-align:center;">Error loading tickets or no tickets found.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="${managerMode ? 6 : 5}" style="text-align:center;">Error loading tickets or no tickets found.</td></tr>`;
                 return;
             }
 
             if (tickets.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="${isManager ? 6 : 5}" style="text-align:center;">No tickets found.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="${managerMode ? 6 : 5}" style="text-align:center;">No tickets found.</td></tr>`;
                 return;
             }
 
@@ -636,7 +714,7 @@
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td><strong>${t.title}</strong></td>
-                    ${isManager ? `<td>${t.owner_email ?? 'Unassigned'}</td>` : ''}
+                    ${managerMode ? `<td>${t.owner_email ?? 'Unassigned'}</td>` : ''}
                     <td><span class="badge ${t.severity.toLowerCase()}">${t.severity}</span></td>
                     <td><span class="badge ${t.status.toLowerCase().replace('_', '-')}">${t.status}</span></td>
                     <td>${new Date(t.created_at).toLocaleDateString()}</td>
@@ -685,7 +763,7 @@
                             return;
                         }
 
-                        loadTickets(isManager);
+                        loadTickets();
                     } catch (error) {
                         console.error('Delete ticket error:', error);
                     }
@@ -697,7 +775,12 @@
     }
 
     async function loadAuditLogs() {
+        const auditCard = document.getElementById('auditCard');
+        if (!managerMode)
+            auditCard.style.display = 'none';
+
         const tbody = document.getElementById('auditBody');
+                loadTickets();
         tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Loading audit logs...</td></tr>';
 
         try {
@@ -789,7 +872,7 @@
             }
 
             closeTicketModal();
-            loadTickets(managerMode);
+            loadTickets();
         } catch (error) {
             console.error('Save ticket error:', error);
         }

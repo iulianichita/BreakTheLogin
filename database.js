@@ -19,6 +19,8 @@ db.serialize(() => {
         password_hash TEXT NOT NULL,
         role TEXT CHECK(role IN ('ANALYST', 'MANAGER')) NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        reset_token TEXT,
+        reset_token_expires_at DATETIME,
         locked INTEGER DEFAULT 00 CHECK(locked IN (0, 1))
     )`, (err) => { if (err) console.error('users:', err.message); });
         

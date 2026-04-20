@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../database.js';
 import jwt from 'jsonwebtoken';
+import { logAudit } from './audit_helper.js';
 
 const router = express.Router();
 
@@ -56,6 +57,15 @@ router.post('/', (req, res) => {
 
     db.run(sql, [title, description ?? null, severity, status, ownerIdValue], function (err) {
         if (err) return res.status(500).json({ error: err.message });
+
+        logAudit({
+            req,
+            userId: decoded.userId,
+            action: 'TICKET_CREATED',
+            resource: 'tickets',
+            resourceId: this.lastID
+        });
+
         res.status(201).json({
             id: this.lastID,
             title,
@@ -74,11 +84,24 @@ router.get('/', (req, res) => {
 
     if (!token) return res.status(401).json({ error: "Login required" });
 
+    const statusFilterRaw = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+    const severityFilterRaw = typeof req.query.severity === 'string' ? req.query.severity.trim() : '';
+
+    const statusFilter = statusFilterRaw ? statusFilterRaw.toUpperCase() : null;
+    const severityFilter = severityFilterRaw ? severityFilterRaw.toUpperCase() : null;
+
+    if (statusFilter && !VALID_STATUSES.has(statusFilter)) {
+        return badRequest(res, 'status must be OPEN, IN_PROGRESS or RESOLVED');
+    }
+    if (severityFilter && !VALID_SEVERITIES.has(severityFilter)) {
+        return badRequest(res, 'severity must be LOW, MED or HIGH');
+    }
+
     try {
         const decoded = jwt.verify(token, 'abc');
 
         if (decoded.manager == true){
-            db.all(`
+            let sql = `
                 SELECT
                     tickets.id,
                     tickets.title,
@@ -91,15 +114,43 @@ router.get('/', (req, res) => {
                     users.email AS owner_email
                 FROM tickets
                 LEFT JOIN users ON users.id = tickets.owner_id
-                ORDER BY tickets.created_at DESC
-            `, [], async (err, tickets) => {
+                WHERE 1 = 1
+            `;
+            const queryParams = [];
+
+            if (statusFilter) {
+                sql += ' AND tickets.status = ?';
+                queryParams.push(statusFilter);
+            }
+            if (severityFilter) {
+                sql += ' AND tickets.severity = ?';
+                queryParams.push(severityFilter);
+            }
+
+            sql += ' ORDER BY tickets.created_at DESC';
+
+            db.all(sql, queryParams, async (err, tickets) => {
                 if (err) return res.status(500).json({ error: err.message });
 
                 res.json(tickets);
             });
         }
         else {
-            db.all('SELECT * FROM tickets WHERE owner_id = ?', [decoded.userId], async (err, tickets) => {
+            let sql = 'SELECT * FROM tickets WHERE owner_id = ?';
+            const queryParams = [decoded.userId];
+
+            if (statusFilter) {
+                sql += ' AND status = ?';
+                queryParams.push(statusFilter);
+            }
+            if (severityFilter) {
+                sql += ' AND severity = ?';
+                queryParams.push(severityFilter);
+            }
+
+            sql += ' ORDER BY created_at DESC';
+
+            db.all(sql, queryParams, async (err, tickets) => {
                 if (err) return res.status(500).json({ error: err.message });
 
                 res.json(tickets);
@@ -204,6 +255,15 @@ router.put('/:id', (req, res) => {
     db.run(sql, values, function (err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Ticket not found' });
+
+        logAudit({
+            req,
+            userId: decoded.userId,
+            action: 'TICKET_UPDATED',
+            resource: 'tickets',
+            resourceId: ticketId
+        });
+
         res.json({ updatedID: ticketId });
     });
     });
@@ -212,10 +272,30 @@ router.put('/:id', (req, res) => {
 // Delete ticket
 router.delete('/:id', (req, res) => {
     const ticketId = Number(req.params.id);
+    const token = req.cookies.auth_token;
+
+    let actorUserId = null;
+    if (token) {
+        try {
+            const decoded = jwt.verify(token, 'abc');
+            actorUserId = decoded.userId;
+        } catch (err) {
+            actorUserId = null;
+        }
+    }
 
     db.run('DELETE FROM tickets WHERE id = ?', [ticketId], function (err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'Ticket not found' });
+
+        logAudit({
+            req,
+            userId: actorUserId,
+            action: 'TICKET_DELETED',
+            resource: 'tickets',
+            resourceId: ticketId
+        });
+
         res.json({ deletedID: ticketId });
     });
 });
