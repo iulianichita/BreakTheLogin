@@ -86,9 +86,11 @@ router.get('/', (req, res) => {
 
     const statusFilterRaw = typeof req.query.status === 'string' ? req.query.status.trim() : '';
     const severityFilterRaw = typeof req.query.severity === 'string' ? req.query.severity.trim() : '';
+    const searchFilterRaw = typeof req.query.search === 'string' ? req.query.search.trim() : '';
 
     const statusFilter = statusFilterRaw ? statusFilterRaw.toUpperCase() : null;
     const severityFilter = severityFilterRaw ? severityFilterRaw.toUpperCase() : null;
+    const searchFilter = searchFilterRaw || null;
 
     if (statusFilter && !VALID_STATUSES.has(statusFilter)) {
         return badRequest(res, 'status must be OPEN, IN_PROGRESS or RESOLVED');
@@ -126,6 +128,11 @@ router.get('/', (req, res) => {
                 sql += ' AND tickets.severity = ?';
                 queryParams.push(severityFilter);
             }
+            if (searchFilter) {
+                sql += ' AND (LOWER(tickets.title) LIKE ? OR LOWER(COALESCE(tickets.description, \"\")) LIKE ? OR LOWER(COALESCE(users.email, \"\")) LIKE ?)';
+                const searchLike = `%${searchFilter.toLowerCase()}%`;
+                queryParams.push(searchLike, searchLike, searchLike);
+            }
 
             sql += ' ORDER BY tickets.created_at DESC';
 
@@ -146,6 +153,11 @@ router.get('/', (req, res) => {
             if (severityFilter) {
                 sql += ' AND severity = ?';
                 queryParams.push(severityFilter);
+            }
+            if (searchFilter) {
+                sql += ' AND (LOWER(title) LIKE ? OR LOWER(COALESCE(description, \"\")) LIKE ?)';
+                const searchLike = `%${searchFilter.toLowerCase()}%`;
+                queryParams.push(searchLike, searchLike);
             }
 
             sql += ' ORDER BY created_at DESC';

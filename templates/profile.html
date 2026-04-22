@@ -229,6 +229,16 @@
             color: var(--text-color);
         }
 
+        .ticket-filters input {
+            border: 1px solid #d9def0;
+            border-radius: 10px;
+            padding: 0.5rem 0.7rem;
+            font: inherit;
+            background: white;
+            color: var(--text-color);
+            min-width: 220px;
+        }
+
         .filter-reset-btn {
             border: 1px solid #ccd3eb;
             background: white;
@@ -416,6 +426,7 @@
             <h3>My Tickets</h3>
             <div class="tickets-tools">
                 <div class="ticket-filters" id="ticketFilters">
+                    <input id="ticketSearch" type="text" placeholder="Search title, description, owner" oninput="applyTicketFilters()" aria-label="Search tickets">
                     <select id="statusFilter" onchange="applyTicketFilters()" aria-label="Filter by status">
                         <option value="">All statuses</option>
                         <option value="OPEN">Open</option>
@@ -665,10 +676,14 @@
     }
 
     function buildTicketFilterQuery() {
+        const search = document.getElementById('ticketSearch').value.trim();
         const status = document.getElementById('statusFilter').value;
         const severity = document.getElementById('severityFilter').value;
         const query = new URLSearchParams();
 
+        if (search) {
+            query.set('search', search);
+        }
         if (status) {
             query.set('status', status);
         }
@@ -685,6 +700,7 @@
     }
 
     function resetTicketFilters() {
+        document.getElementById('ticketSearch').value = '';
         document.getElementById('statusFilter').value = '';
         document.getElementById('severityFilter').value = '';
         loadTickets();
@@ -776,11 +792,13 @@
 
     async function loadAuditLogs() {
         const auditCard = document.getElementById('auditCard');
-        if (!managerMode)
+        if (!managerMode){
             auditCard.style.display = 'none';
+            return;
+        }
 
         const tbody = document.getElementById('auditBody');
-                loadTickets();
+        // loadTickets();
         tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Loading audit logs...</td></tr>';
 
         try {
@@ -839,9 +857,9 @@
 
         delete payload.id;
 
-        if (!managerMode) {
-            delete payload.owner_id;
-        }
+        // if (!managerMode) {
+        //     delete payload.owner_id;
+        // }
 
         if (payload.owner_id === '') {
             delete payload.owner_id;
@@ -883,10 +901,6 @@
 
         const formData = new FormData(event.currentTarget);
         const payload = Object.fromEntries(formData.entries());
-
-        if (!payload.password_hash) {
-            delete payload.password_hash;
-        }
 
         try {
             const response = await fetch('/api/user/profile', {
