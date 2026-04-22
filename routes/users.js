@@ -149,34 +149,14 @@ router.put('/profile', (req, res) => {
         return res.status(401).json({ error: 'Invalid token' });
     }
 
-    const { email, password_hash } = req.body;
-    const fields = [];
-    const values = [];
+    const { email } = req.body;
 
     if (email !== undefined) {
-        if (!email) {
-            return badRequest(res, 'email cannot be empty');
-        }
-        fields.push('email = ?');
-        values.push(email);
+        return badRequest(res, 'email cannot be empty');
     }
 
-    if (password_hash !== undefined) {
-        if (!password_hash) {
-            return badRequest(res, 'password_hash cannot be empty');
-        }
-        fields.push('password_hash = ?');
-        values.push(password_hash);
-    }
 
-    if (fields.length === 0) {
-        return badRequest(res, 'No fields provided for update');
-    }
-
-    values.push(decoded.userId);
-    const sql = `UPDATE users SET ${fields.join(', ')} WHERE id = ?`;
-
-    db.run(sql, values, function (err) {
+    db.run('UPDATE users SET email = ? WHERE id = ?', [email, decoded.userId], function (err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
 
@@ -215,68 +195,12 @@ router.get('/assignees', (req, res) => {
     }
 });
 
-// // Update user
-// router.put('/:id', (req, res) => {
-//     const token = req.cookies.auth_token;
-
-//     if (!token) return res.status(401).json({ error: 'Login required' });
-
-//     let decoded;
-//     try {
-//         decoded = jwt.verify(token, 'abc');
-//     } catch (err) {
-//         return res.status(401).json({ error: 'Invalid token' });
-//     }
-//     const userId = decoded.userId;
-//     const { email, password_hash, role, locked } = req.body;
-
-//     const fields = [];
-//     const values = [];
-
-//     if (email !== undefined) {
-//         fields.push('email = ?');
-//         values.push(email);
-//     }
-//     if (password_hash !== undefined) {
-//         fields.push('password_hash = ?');
-//         values.push(password_hash);
-//     }
-//     if (role !== undefined) {
-//         if (!VALID_ROLES.has(role)) {
-//             return badRequest(res, 'role must be ANALYST or MANAGER');
-//         }
-//         fields.push('role = ?');
-//         values.push(role);
-//     }
-//     if (locked !== undefined) {
-//         const normalizedLocked = normalizeLocked(locked);
-//         if (normalizedLocked === null) {
-//             return badRequest(res, 'locked must be 0/1 or boolean');
-//         }
-//         fields.push('locked = ?');
-//         values.push(normalizedLocked);
-//     }
-
-//     if (fields.length === 0) {
-//         return badRequest(res, 'No fields provided for update');
-//     }
-
-//     values.push(userId);
-//     const sql = `UPDATE users SET ${fields.join(', ')} WHERE id = ?`;
-
-//     db.run(sql, values, function (err) {
-//         if (err) return res.status(500).json({ error: err.message });
-//         if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
-//         res.json({ updatedID: userId });
-//     });
-// });
-
-// Request reset password
+// Request forgot password
 router.post('/forgotpassword', (req, res) => {
     const { email } = req.body;
 
     if (!email) {
-        return badRequest(res, 'email is required');
+        return badRequest(res, 'Email is required');
     }
 
     const genericResponse = {
