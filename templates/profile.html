@@ -395,7 +395,7 @@
         <div class="profile-top">
             <h2>User Profile</h2>
             <div class="profile-actions">
-                <button class="edit-profile-btn" onclick="openProfileEditModal()">Edit Profile</button>
+                <button class="edit-profile-btn" id="editProfileBtn" onclick="openProfileEditModal()">Edit Profile</button>
                 <button class="logout-btn" onclick="logout()">Logout</button>
                 <button class="delete-account-btn" onclick="deleteAccount()">Delete Account</button>
             </div>
@@ -544,7 +544,7 @@
         <form class="ticket-form" id="editProfileForm">
             <div class="form-group">
                 <label for="profileEmail">Email</label>
-                <input id="profileEmail" name="email" type="email" required>
+                <input id="profileEmail" name="email" type="text" required>
             </div>
             <button type="button" class="forgot-password-btn" onclick="goToForgotPassword()">Click here to reset password</button>
             <div class="form-actions">
@@ -580,7 +580,12 @@
                     });
                 document.getElementById('ownerHeader').style.display = managerMode ? '' : 'none';
                 document.getElementById('managerActions').style.display = managerMode ? 'flex' : 'none';
-                document.getElementById('ticketsLoadingCell').colSpan = managerMode ? 6 : 5;
+                const loadingCell = document.getElementById('ticketsLoadingCell');
+
+                if (loadingCell) {
+                    const isManager = document.getElementById('ownerHeader').style.display !== 'none';
+                    loadingCell.colSpan = isManager ? 6 : 5;
+                }
 
                 if (managerMode) {
                     await loadAssignees();
@@ -670,9 +675,20 @@
 
     function closeProfileEditModal() {
         const modal = document.getElementById('profileModalBackdrop');
+        const editButton = document.getElementById('editProfileBtn');
+
+        // resetam formularul
+        document.getElementById('editProfileForm').reset();
+
+        // mutam focusul inapoi pe pagina principala
+        if (editButton) {
+            editButton.focus();
+        }
+
         modal.style.display = 'none';
         modal.setAttribute('aria-hidden', 'true');
-        document.getElementById('editProfileForm').reset();
+        
+        modal.setAttribute('inert', '');
     }
 
     function buildTicketFilterQuery() {

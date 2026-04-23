@@ -151,7 +151,7 @@ router.put('/profile', (req, res) => {
 
     const { email } = req.body;
 
-    if (email !== undefined) {
+    if (!email) {
         return badRequest(res, 'email cannot be empty');
     }
 
