@@ -25,7 +25,6 @@ db.serialize(() => {
         locked INTEGER DEFAULT 00 CHECK(locked IN (0, 1))
     )`, (err) => { if (err) console.error('users:', err.message); });
 
-    // Lightweight migration for existing databases created before failed_login_attempts existed.
     db.all(`PRAGMA table_info(users)`, [], (err, columns) => {
         if (err) {
             console.error('users schema check:', err.message);
