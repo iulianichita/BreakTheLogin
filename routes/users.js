@@ -328,6 +328,11 @@ router.post('/resetpassword/:token', (req, res) => {
                     if (updateErr) return res.status(500).json({ error: updateErr.message });
                     if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
 
+                    res.clearCookie('auth_token', {
+                        httpOnly: false,
+                        secure: false,
+                    });
+
                     logAudit({
                         req,
                         userId: user.id,
