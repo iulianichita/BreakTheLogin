@@ -2,11 +2,14 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import session from 'express-session';
 import userRoutes from './routes/users.js';
 import ticketsRoutes from './routes/tickets.js';
 import auditLogsRoutes from './routes/audit_logs.js';
 import cookieParser from 'cookie-parser';
 import db from './database.js';
+import { authMiddleware } from './routes/authMiddleware.js';
+import 'dotenv/config';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,6 +19,17 @@ const port = 3000;
 
 app.use(express.json());
 app.use(cookieParser());
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'dev-session-secret',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 30 * 24 * 60 * 60 * 1000
+    }
+}));
 app.use('/api/user', userRoutes);
 app.use('/api/tickets', ticketsRoutes);
 app.use('/api/auditlogs', auditLogsRoutes);
@@ -26,10 +40,6 @@ app.get('/', (req, res) => {
 
 app.get('/login', (req, res) => {
     res.sendFile(path.join(__dirname, './templates/login.html'));
-});
-
-app.get('/users', (req, res) => {
-    res.sendFile(path.join(__dirname, './templates/users.html'));
 });
 
 app.get('/register', (req, res) => {
@@ -66,7 +76,7 @@ app.get('/resetpassword/:token', (req, res) => {
     );
 });
 
-app.get('/profile', (req, res) => {
+app.get('/profile', authMiddleware, (req, res) => {
     res.sendFile(path.join(__dirname, './templates/profile.html'));
 });
 

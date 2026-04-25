@@ -1,19 +1,14 @@
 import express from 'express';
 import db from '../database.js'
-import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { logAudit } from './audit_helper.js';
 import bcrypt from 'bcrypt';
 import 'dotenv/config';
+import { logAudit } from './audit_helper.js';
+import { authMiddleware } from './authMiddleware.js';
 
 const router = express.Router();
 const saltRounds = 10;
-const JWT_SECRET = process.env.JWT_SECRET;
 const MAX_FAILED_LOGIN_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
-
-if (!JWT_SECRET) {
-    throw new Error('JWT_SECRET is missing. Add JWT_SECRET in .env');
-}
 
 function badRequest(res, message) {
     return res.status(400).json({ error: message });
@@ -82,18 +77,8 @@ router.post('/login', (req, res) => {
                     (updateErr) => {
                         if (updateErr) return res.status(500).json({ error: 'Server error' });
 
-                        const payload = { userId: user.id, manager: user.role === "MANAGER"? true : false };
-                        const token = jwt.sign(
-                            payload,
-                            JWT_SECRET,
-                            { expiresIn: '10min' }
-                        );
-
-                        res.cookie('auth_token', token, {
-                            httpOnly: false,            // permite furtul prin XSS (JS poate citi cookie-ul)
-                            secure: false,              // merge pe HTTP
-                            maxAge: 365 * 24 * 60 * 60 * 1000 // expirare peste 1 an
-                        });
+                        req.session.userId = user.id;
+                        req.session.manager = user.role === "MANAGER";
 
                         logAudit({
                             req,
@@ -140,118 +125,76 @@ router.post('/login', (req, res) => {
 
 });
 
-router.post('/logout', (req, res) => {
-    const token = req.cookies.auth_token;
-
+router.post('/logout', authMiddleware, (req, res) => {
     const genericErrorMessage = 'Invalid data provided';
 
-    if (!token) return res.status(401).json({ error: "Login required" });
+    db.get('SELECT id, email FROM users WHERE id = ?', [req.user.id], async (err, user) => {
+        if (err) return res.status(500).json({ error: 'Server error' });
+        if (!user) return res.status(404).json({ error: genericErrorMessage });
 
-    try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-
-        db.get('SELECT id, email FROM users WHERE id = ?', [decoded.userId], async (err, user) => {
-            if (err) return res.status(500).json({ error: 'Server error' });
-            if (!user) return res.status(404).json({ error: genericErrorMessage });
-
-            res.clearCookie('auth_token', {
-                httpOnly: false,
-                secure: false,
-            });
-
-            logAudit({
-                req,
-                userId: user.id,
-                action: 'LOGOUT_SUCCES',
-                resource: 'users',
-                resourceId: user.id
-            });
-
-            res.json({message: "Logout successfully!"});
+        logAudit({
+            req,
+            userId: user.id,
+            action: 'LOGOUT_SUCCES',
+            resource: 'users',
+            resourceId: user.id
         });
 
-    } catch (err) {
-        res.status(401).json({ error: "Invalid token" });
-    }
+        req.session.destroy((sessionErr) => {
+            if (sessionErr) {
+                return res.status(500).json({ error: 'Server error' });
+            }
+            res.clearCookie('connect.sid');
+            return res.json({ message: 'Logout successfully!' });
+        });
+    });
 });
 
 // Read
-router.get('/profile', (req, res) => {
-    const token = req.cookies.auth_token;
-
+router.get('/profile', authMiddleware, (req, res) => {
     const genericErrorMessage = 'Invalid data provided';
 
-    if (!token) return res.status(401).json({ error: "Login required" });
+    db.get('SELECT id, email, role, created_at FROM users WHERE id = ?', [req.user.id], async (err, user) => {
+        if (err) return res.status(500).json({ error: 'Server error' });
+        if (!user) return res.status(404).json({ error: genericErrorMessage });
 
-    try {
-        const decoded = jwt.verify(token, JWT_SECRET);
+        res.json(user);
+    });
 
-        db.get('SELECT id, email, role, created_at FROM users WHERE id = ?', [decoded.userId], async (err, user) => {
-            if (err) return res.status(500).json({ error: 'Server error' });
-            if (!user) return res.status(404).json({ error: genericErrorMessage });
-
-            res.json(user);
-        });
-
-    } catch (err) {
-        res.status(401).json({ error: "Invalid token" });
-    }
 });
 
 // Update current user profile
-router.put('/profile', (req, res) => {
-    const token = req.cookies.auth_token;
-
+router.put('/profile', authMiddleware, (req, res) => {
     const genericErrorMessage = 'Invalid data provided';
-
-    if (!token) return res.status(401).json({ error: 'Login required' });
-
-    let decoded;
-    try {
-        decoded = jwt.verify(token, JWT_SECRET);
-    } catch (err) {
-        return res.status(401).json({ error: 'Invalid token' });
-    }
-
     const { email } = req.body;
 
-    db.run('UPDATE users SET email = ? WHERE id = ?', [email, decoded.userId], function (err) {
+    db.run('UPDATE users SET email = ? WHERE id = ?', [email, req.user.id], function (err) {
         if (err) return res.status(500).json({ error: 'Server error' });
         if (this.changes === 0) return res.status(404).json({ error: genericErrorMessage });
 
         logAudit({
             req,
-            userId: decoded.userId,
+            userId: req.user.id,
             action: 'ACCOUNT_UPDATED',
             resource: 'users',
-            resourceId: decoded.userId
+            resourceId: req.user.id
         });
 
-        res.json({ updatedID: decoded.userId });
+        res.json({ updatedID: req.user.id });
     });
 });
 
 // Manager-only user list for assigning tickets
-router.get('/assignees', (req, res) => {
-    const token = req.cookies.auth_token;
-
-    if (!token) return res.status(401).json({ error: 'Login required' });
-
-    try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-
-        if (decoded.manager !== true) {
-            return res.status(403).json({ error: 'Only managers can view assignees' });
-        }
-
-        db.all('SELECT id, email, role FROM users ORDER BY email ASC', [], (err, users) => {
-            if (err) return res.status(500).json({ error: 'Server error' });
-
-            res.json(users);
-        });
-    } catch (err) {
-        res.status(401).json({ error: 'Invalid token' });
+router.get('/assignees', authMiddleware, (req, res) => {
+    if (req.user.manager !== true) {
+        return res.status(403).json({ error: 'Only managers can view assignees' });
     }
+
+    db.all('SELECT id, email, role FROM users ORDER BY email ASC', [], (err, users) => {
+        if (err) return res.status(500).json({ error: 'Server error' });
+
+        res.json(users);
+    });
 });
 
 // Request forgot password
@@ -334,11 +277,6 @@ router.post('/resetpassword/:token', (req, res) => {
                         if (updateErr) return res.status(500).json({ error: 'Server error' });
                         if (this.changes === 0) return res.status(404).json({ error: genericErrorMessage });
 
-                        res.clearCookie('auth_token', {
-                            httpOnly: false,
-                            secure: false,
-                        });
-
                         logAudit({
                             req,
                             userId: user.id,
@@ -359,31 +297,26 @@ router.post('/resetpassword/:token', (req, res) => {
 });
 
 // Delete user
-router.delete('/:id', (req, res) => {
+router.delete('/:id', authMiddleware, (req, res) => {
     const userId = Number(req.params.id);
-    const token = req.cookies.auth_token;
 
-    if (!token) return res.status(401).json({ error: 'Login required' });
+    if (req.user.id !== userId) {
+        return res.status(403).json({ error: 'You can only delete your own account' });
+    }
 
-    try {
-        const decoded = jwt.verify(token, JWT_SECRET);
+    db.run('DELETE FROM users WHERE id = ?', [userId], function (err) {
+        if (err) return res.status(500).json({ error: 'Server error' });
+        if (this.changes === 0) return res.status(404).json({ error: 'Invalid credentials' });
 
-        if (decoded.userId !== userId) {
-            return res.status(403).json({ error: 'You can only delete your own account' });
-        }
-
-        db.run('DELETE FROM users WHERE id = ?', [userId], function (err) {
-            if (err) return res.status(500).json({ error: 'Server error' });
-            if (this.changes === 0) return res.status(404).json({ error: 'Invalid credentials' });
-
-            res.clearCookie('auth_token', {
-                httpOnly: false,
-                secure: false,
-            });
-
+        req.session.destroy((sessionErr) => {
+            if (sessionErr) {
+                return res.status(500).json({ error: 'Server error' });
+            }
+            res.clearCookie('connect.sid');
+            
             logAudit({
                 req,
-                userId: decoded.userId,
+                userId,
                 action: 'ACCOUNT_DELETED',
                 resource: 'users',
                 resourceId: userId
@@ -391,9 +324,7 @@ router.delete('/:id', (req, res) => {
 
             res.json({ deletedID: userId });
         });
-    } catch (err) {
-        res.status(401).json({ error: 'Invalid token' });
-    }
+    });
 });
 
 

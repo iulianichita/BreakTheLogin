@@ -1,8 +1,7 @@
 import express from 'express';
 import db from '../database.js';
-import jwt from 'jsonwebtoken';
 import { logAudit } from './audit_helper.js';
-import 'dotenv/config';
+import { authMiddleware } from './authMiddleware.js';
 
 const router = express.Router();
 
@@ -13,22 +12,11 @@ function badRequest(res, message) {
     return res.status(400).json({ error: message });
 }
 
+router.use(authMiddleware);
 
 // Create ticket
 router.post('/', (req, res) => {
-    const token = req.cookies.auth_token;
-
-    if (!token) return res.status(401).json({ error: 'Login required' });
-
-    let decoded;
-    try {
-        decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (err) {
-        console.log('JWT error:', err.message);
-        return res.status(401).json({ error: 'Invalid token' });
-    }
-
-    if (decoded.manager !== true) {
+    if (req.user.manager !== true) {
         return res.status(403).json({ error: 'Only managers can create tickets' });
     }
 
@@ -45,8 +33,9 @@ router.post('/', (req, res) => {
     }
 
     const ownerIdValue = owner_id === undefined || owner_id === null || owner_id === ''
-        ? decoded.userId
+        ? req.user.id
         : Number(owner_id);
+
     if (ownerIdValue !== null && Number.isNaN(ownerIdValue)) {
         return badRequest(res, 'owner_id must be a number');
     }
@@ -61,7 +50,7 @@ router.post('/', (req, res) => {
 
         logAudit({
             req,
-            userId: decoded.userId,
+            userId: req.user.id,
             action: 'TICKET_CREATED',
             resource: 'tickets',
             resourceId: this.lastID
@@ -78,13 +67,8 @@ router.post('/', (req, res) => {
     });
 });
 
-
 // Read tickets
 router.get('/', (req, res) => {
-    const token = req.cookies.auth_token;
-
-    if (!token) return res.status(401).json({ error: "Login required" });
-
     const statusFilterRaw = typeof req.query.status === 'string' ? req.query.status.trim() : '';
     const severityFilterRaw = typeof req.query.severity === 'string' ? req.query.severity.trim() : '';
     const searchFilterRaw = typeof req.query.search === 'string' ? req.query.search.trim() : '';
@@ -100,106 +84,94 @@ router.get('/', (req, res) => {
         return badRequest(res, 'severity must be LOW, MED or HIGH');
     }
 
-    try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (req.user.manager === true) {
+        let sql = `
+            SELECT
+                tickets.id,
+                tickets.title,
+                tickets.description,
+                tickets.severity,
+                tickets.status,
+                tickets.owner_id,
+                tickets.created_at,
+                tickets.updated_at,
+                users.email AS owner_email
+            FROM tickets
+            LEFT JOIN users ON users.id = tickets.owner_id
+            WHERE 1 = 1
+        `;
+        const queryParams = [];
 
-        if (decoded.manager == true){
-            let sql = `
-                SELECT
-                    tickets.id,
-                    tickets.title,
-                    tickets.description,
-                    tickets.severity,
-                    tickets.status,
-                    tickets.owner_id,
-                    tickets.created_at,
-                    tickets.updated_at,
-                    users.email AS owner_email
-                FROM tickets
-                LEFT JOIN users ON users.id = tickets.owner_id
-                WHERE 1 = 1
-            `;
-            const queryParams = [];
-
-            if (statusFilter) {
-                sql += ' AND tickets.status = ?';
-                queryParams.push(statusFilter);
-            }
-            if (severityFilter) {
-                sql += ' AND tickets.severity = ?';
-                queryParams.push(severityFilter);
-            }
-            if (searchFilter) {
-                sql += ' AND (LOWER(tickets.title) LIKE ? OR LOWER(COALESCE(users.email, \"\")) LIKE ?)';
-                const searchLike = `%${searchFilter.toLowerCase()}%`;
-                queryParams.push(searchLike, searchLike, searchLike);
-            }
-
-            sql += ' ORDER BY tickets.created_at DESC';
-
-            db.all(sql, queryParams, async (err, tickets) => {
-                if (err) return res.status(500).json({ error: err.message });
-
-                res.json(tickets);
-            });
+        if (statusFilter) {
+            sql += ' AND tickets.status = ?';
+            queryParams.push(statusFilter);
         }
-        else {
-            let sql = 'SELECT * FROM tickets WHERE owner_id = ?';
-            const queryParams = [decoded.userId];
-
-            if (statusFilter) {
-                sql += ' AND status = ?';
-                queryParams.push(statusFilter);
-            }
-            if (severityFilter) {
-                sql += ' AND severity = ?';
-                queryParams.push(severityFilter);
-            }
-            if (searchFilter) {
-                sql += ' AND (LOWER(title) LIKE ?';
-                const searchLike = `%${searchFilter.toLowerCase()}%`;
-                queryParams.push(searchLike, searchLike);
-            }
-
-            sql += ' ORDER BY created_at DESC';
-
-            db.all(sql, queryParams, async (err, tickets) => {
-                if (err) return res.status(500).json({ error: err.message });
-
-                res.json(tickets);
-            });
+        if (severityFilter) {
+            sql += ' AND tickets.severity = ?';
+            queryParams.push(severityFilter);
+        }
+        if (searchFilter) {
+            sql += ' AND (LOWER(tickets.title) LIKE ? OR LOWER(COALESCE(users.email, "")) LIKE ?)';
+            const searchLike = `%${searchFilter.toLowerCase()}%`;
+            queryParams.push(searchLike, searchLike);
         }
 
-    } catch (err) {
-        console.log("JWT error:", err.message);
-        res.status(401).json({ error: "Invalid token" });
+        sql += ' ORDER BY tickets.created_at DESC';
+
+        db.all(sql, queryParams, (err, tickets) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json(tickets);
+        });
+        return;
     }
-    
+
+    let sql = 'SELECT * FROM tickets WHERE owner_id = ?';
+    const queryParams = [req.user.id];
+
+    if (statusFilter) {
+        sql += ' AND status = ?';
+        queryParams.push(statusFilter);
+    }
+    if (severityFilter) {
+        sql += ' AND severity = ?';
+        queryParams.push(severityFilter);
+    }
+    if (searchFilter) {
+        sql += ' AND LOWER(title) LIKE ?';
+        queryParams.push(`%${searchFilter.toLowerCase()}%`);
+    }
+
+    sql += ' ORDER BY created_at DESC';
+
+    db.all(sql, queryParams, (err, tickets) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(tickets);
+    });
 });
 
 // Read one ticket
 router.get('/:id', (req, res) => {
     const ticketId = Number(req.params.id);
+    if (Number.isNaN(ticketId)) {
+        return badRequest(res, 'id must be a number');
+    }
 
     db.get('SELECT * FROM tickets WHERE id = ?', [ticketId], (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!row) return res.status(404).json({ error: 'Ticket not found' });
+
+        const isManager = req.user.manager === true;
+        const isOwner = row.owner_id === req.user.id;
+        if (!isManager && !isOwner) {
+            return res.status(403).json({ error: 'You can only view your own tickets' });
+        }
+
         res.json(row);
     });
 });
 
 // Update ticket
 router.put('/:id', (req, res) => {
-    const token = req.cookies.auth_token;
-    if (!token) return res.status(401).json({ error: 'Login required' });
-
-    let decoded;
-    try {
-        decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (err) {
-        return res.status(401).json({ error: 'Invalid token' });
-    }
-
     const ticketId = Number(req.params.id);
     if (Number.isNaN(ticketId)) {
         return badRequest(res, 'id must be a number');
@@ -209,8 +181,8 @@ router.put('/:id', (req, res) => {
         if (findErr) return res.status(500).json({ error: findErr.message });
         if (!ticketRow) return res.status(404).json({ error: 'Ticket not found' });
 
-        const isManager = decoded.manager === true;
-        const isOwner = ticketRow.owner_id === decoded.userId;
+        const isManager = req.user.manager === true;
+        const isOwner = ticketRow.owner_id === req.user.id;
 
         if (!isManager && !isOwner) {
             return res.status(403).json({ error: 'You can only edit your own tickets' });
@@ -271,7 +243,7 @@ router.put('/:id', (req, res) => {
 
             logAudit({
                 req,
-                userId: decoded.userId,
+                userId: req.user.id,
                 action: 'TICKET_UPDATED',
                 resource: 'tickets',
                 resourceId: ticketId
@@ -285,31 +257,35 @@ router.put('/:id', (req, res) => {
 // Delete ticket
 router.delete('/:id', (req, res) => {
     const ticketId = Number(req.params.id);
-    const token = req.cookies.auth_token;
-
-    if (!token) return res.status(401).json({ error: 'Login required' });
-
-    try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (err) {
-        actorUserId = null;
+    if (Number.isNaN(ticketId)) {
+        return badRequest(res, 'id must be a number');
     }
 
-    db.run('DELETE FROM tickets WHERE id = ?', [ticketId], function (err) {
-        if (err) return res.status(500).json({ error: err.message });
-        if (this.changes === 0) return res.status(404).json({ error: 'Ticket not found' });
+    db.get('SELECT owner_id FROM tickets WHERE id = ?', [ticketId], (findErr, ticketRow) => {
+        if (findErr) return res.status(500).json({ error: findErr.message });
+        if (!ticketRow) return res.status(404).json({ error: 'Ticket not found' });
 
-        logAudit({
-            req,
-            userId: decoded.userId,
-            action: 'TICKET_DELETED',
-            resource: 'tickets',
-            resourceId: ticketId
+        const isManager = req.user.manager === true;
+        const isOwner = ticketRow.owner_id === req.user.id;
+        if (!isManager && !isOwner) {
+            return res.status(403).json({ error: 'You can only delete your own tickets' });
+        }
+
+        db.run('DELETE FROM tickets WHERE id = ?', [ticketId], function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            if (this.changes === 0) return res.status(404).json({ error: 'Ticket not found' });
+
+            logAudit({
+                req,
+                userId: req.user.id,
+                action: 'TICKET_DELETED',
+                resource: 'tickets',
+                resourceId: ticketId
+            });
+
+            res.json({ deletedID: ticketId });
         });
-
-        res.json({ deletedID: ticketId });
     });
 });
-
 
 export default router;
