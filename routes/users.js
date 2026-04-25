@@ -9,9 +9,20 @@ import { authMiddleware } from './authMiddleware.js';
 const router = express.Router();
 const saltRounds = 10;
 const MAX_FAILED_LOGIN_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
+const VALID_ROLES = new Set(['USER', 'MANAGER']);
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[.,;:?!*+@#$%\-]).{8,}$/;
 
 function badRequest(res, message) {
     return res.status(400).json({ error: message });
+}
+
+function isNonEmptyString(value) {
+    return typeof value === 'string' && value.trim() !== '';
+}
+
+function isValidEmail(email) {
+    return isNonEmptyString(email) && EMAIL_REGEX.test(email.trim());
 }
 
 const genericResponseInvalidCredentials = 'INVALID_CREDENTIALS';
@@ -19,10 +30,26 @@ const genericResponseInvalidCredentials = 'INVALID_CREDENTIALS';
 // Create user
 router.post('/register', async (req, res) => {
     const { email, password, role } = req.body;
-    const genericErrorMessage = 'Invalid registration data provided';
 
-    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[.,;:?!*+@#$%\-]).{8,}$/;
-    if (password.length < 8 || !passwordRegex.test(password)) {
+    if (!isNonEmptyString(email)) {
+        return badRequest(res, 'email is required');
+    }
+    if (!isValidEmail(email)) {
+        return badRequest(res, 'email format is invalid');
+    }
+    if (!isNonEmptyString(password)) {
+        return badRequest(res, 'password is required');
+    }
+    if (!isNonEmptyString(role)) {
+        return badRequest(res, 'role is required');
+    }
+
+    const roleValue = role.trim().toUpperCase();
+    if (!VALID_ROLES.has(roleValue)) {
+        return badRequest(res, 'role must be USER or MANAGER');
+    }
+
+    if (!PASSWORD_REGEX.test(password)) {
         return badRequest(res, 'password must be at least 8 characters long and include: an uppercase letter, a lowercase letter, a digit and a special character (.,;:?!*+-@#$%)');
     }
 
@@ -31,7 +58,7 @@ router.post('/register', async (req, res) => {
 
         const sql = 'INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)';
 
-        db.run(sql, [email, hash, role], function (err) {
+        db.run(sql, [email.trim(), hash, roleValue], function (err) {
             if (err) return res.status(500).json({ error: 'Server error' });
 
             logAudit({
@@ -44,8 +71,8 @@ router.post('/register', async (req, res) => {
 
             res.status(201).json({
                 id: this.lastID,
-                email,
-                role
+                email: email.trim(),
+                role: roleValue
             });
         });
     } catch (err) {
@@ -58,8 +85,20 @@ router.post('/login', (req, res) => {
     const { email, password } = req.body;
 
     const genericErrorMessage = 'Invalid login data provided';
+
+    if (!isNonEmptyString(email)) {
+        return badRequest(res, 'email is required');
+    }
+    if (!isValidEmail(email)) {
+        return badRequest(res, 'email format is invalid');
+    }
+    if (!isNonEmptyString(password)) {
+        return badRequest(res, 'password is required');
+    }
     
-    db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
+    const normalizedEmail = email.trim();
+    
+    db.get('SELECT * FROM users WHERE email = ?', [normalizedEmail], async (err, user) => {
         if (err) return res.status(500).json({ error: 'Server error' });
         if (!user) return res.status(404).json({ error: genericErrorMessage });
 
@@ -168,7 +207,14 @@ router.put('/profile', authMiddleware, (req, res) => {
     const genericErrorMessage = 'Invalid data provided';
     const { email } = req.body;
 
-    db.run('UPDATE users SET email = ? WHERE id = ?', [email, req.user.id], function (err) {
+    if (!isNonEmptyString(email)) {
+        return badRequest(res, 'email is required');
+    }
+    if (!isValidEmail(email)) {
+        return badRequest(res, 'email format is invalid');
+    }
+
+    db.run('UPDATE users SET email = ? WHERE id = ?', [email.trim(), req.user.id], function (err) {
         if (err) return res.status(500).json({ error: 'Server error' });
         if (this.changes === 0) return res.status(404).json({ error: genericErrorMessage });
 
@@ -201,11 +247,20 @@ router.get('/assignees', authMiddleware, (req, res) => {
 router.post('/forgotpassword', (req, res) => {
     const { email } = req.body;
 
+    if (!isNonEmptyString(email)) {
+        return badRequest(res, 'email is required');
+    }
+    if (!isValidEmail(email)) {
+        return badRequest(res, 'email format is invalid');
+    }
+
+    const normalizedEmail = email.trim();
+
     const genericResponse = {
         message: 'If that email exists, a reset link has been generated.'
     };
 
-    db.get('SELECT id FROM users WHERE email = ?', [email], (err, user) => {
+    db.get('SELECT id FROM users WHERE email = ?', [normalizedEmail], (err, user) => {
         if (err) return res.status(500).json({ error: 'Server error' });
         if (!user) return res.status(404).json({error : genericResponse});
 
@@ -247,6 +302,9 @@ router.post('/resetpassword/:token', (req, res) => {
     if (!resetToken) {
         return badRequest(res, 'reset token is required');
     }
+    if (!isNonEmptyString(password)) {
+        return badRequest(res, 'password is required');
+    }
 
     const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
 
@@ -262,8 +320,7 @@ router.post('/resetpassword/:token', (req, res) => {
             if (!user) return res.status(404).json({ error: genericErrorMessage });
 
             try {
-                const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[.,;:?!*+@#$%\-]).{8,}$/;
-                if (password.length < 8 || !passwordRegex.test(password)) {
+                if (!PASSWORD_REGEX.test(password)) {
                     return badRequest(res, 'password must be at least 8 characters long and include: an uppercase letter, a lowercase letter, a digit and a special character (.,;:?!*+-@#$%)');
                 }
 
@@ -299,6 +356,10 @@ router.post('/resetpassword/:token', (req, res) => {
 // Delete user
 router.delete('/', authMiddleware, (req, res) => {
     const userId = Number(req.user.id);
+
+    if (Number.isNaN(userId)) {
+        return badRequest(res, 'id is required and must be a number');
+    }
 
     db.run('DELETE FROM users WHERE id = ?', [userId], function (err) {
         if (err) return res.status(500).json({ error: 'Server error' });
