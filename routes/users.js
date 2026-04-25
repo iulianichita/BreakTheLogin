@@ -22,11 +22,11 @@ function badRequest(res, message) {
 
 // Create user
 router.post('/register', (req, res) => {
-    const { email, password_hash, role, locked } = req.body;
+    const { email, password, role, locked } = req.body;
     const normalizedLocked = normalizeLocked(locked ?? 0);
 
-    if (!email || !password_hash || !role) {
-        return badRequest(res, 'email, password_hash and role are required');
+    if (!email || !password || !role) {
+        return badRequest(res, 'email, password and role are required');
     }
     if (!VALID_ROLES.has(role)) {
         return badRequest(res, 'role must be ANALYST or MANAGER');
@@ -37,7 +37,7 @@ router.post('/register', (req, res) => {
 
     const sql = 'INSERT INTO users (email, password_hash, role, locked) VALUES (?, ?, ?, ?)';
 
-    db.run(sql, [email, password_hash, role, normalizedLocked], function (err) {
+    db.run(sql, [email, password, role, normalizedLocked], function (err) {
         if (err) return res.status(500).json({ error: err.message });
 
         logAudit({
@@ -59,7 +59,7 @@ router.post('/register', (req, res) => {
 
 // Login
 router.post('/login', (req, res) => {
-    const { email, password_hash } = req.body;
+    const { email, password } = req.body;
     
     db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
         if (err) return res.status(500).json({ error: err.message });
@@ -75,7 +75,7 @@ router.post('/login', (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
 
-        const match = password_hash == user.password_hash;
+        const match = password == user.password_hash;
         
         if (match) {
             const payload = { userId: user.id, manager: user.role === "MANAGER"? true : false };
@@ -115,6 +115,31 @@ router.post('/login', (req, res) => {
 
 });
 
+router.post('logout', (req, res) => {
+    const token = req.cookies.auth_token;
+
+    if (!token) return res.status(401).json({ error: "Login required" });
+
+    try {
+        const decoded = jwt.verify(token, 'abc');
+
+        db.get('SELECT id, email  FROM users WHERE id = ?', [decoded.userId], async (err, user) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!user) return res.status(404).json({ error: 'User not found' });
+
+            res.clearCookie('auth_token', {
+                httpOnly: false,
+                secure: false,
+            });
+
+            res.json({message: "Logout successfully!"});
+        });
+
+    } catch (err) {
+        res.status(401).json({ error: "Invalid token" });
+    }
+});
+
 // Read
 router.get('/profile', (req, res) => {
     const token = req.cookies.auth_token;
@@ -149,34 +174,15 @@ router.put('/profile', (req, res) => {
         return res.status(401).json({ error: 'Invalid token' });
     }
 
-    const { email, password_hash } = req.body;
-    const fields = [];
-    const values = [];
+    const { email } = req.body;
 
-    if (email !== undefined) {
-        if (!email) {
-            return badRequest(res, 'email cannot be empty');
-        }
-        fields.push('email = ?');
-        values.push(email);
+    if (!email) {
+        return badRequest(res, 'email cannot be empty');
     }
 
-    if (password_hash !== undefined) {
-        if (!password_hash) {
-            return badRequest(res, 'password_hash cannot be empty');
-        }
-        fields.push('password_hash = ?');
-        values.push(password_hash);
-    }
+    const sql = `UPDATE users SET email = ? WHERE id = ?`;
 
-    if (fields.length === 0) {
-        return badRequest(res, 'No fields provided for update');
-    }
-
-    values.push(decoded.userId);
-    const sql = `UPDATE users SET ${fields.join(', ')} WHERE id = ?`;
-
-    db.run(sql, values, function (err) {
+    db.run(sql, [email, decoded.userId], function (err) {
         if (err) return res.status(500).json({ error: err.message });
         if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
 
@@ -214,62 +220,6 @@ router.get('/assignees', (req, res) => {
         res.status(401).json({ error: 'Invalid token' });
     }
 });
-
-// // Update user
-// router.put('/:id', (req, res) => {
-//     const token = req.cookies.auth_token;
-
-//     if (!token) return res.status(401).json({ error: 'Login required' });
-
-//     let decoded;
-//     try {
-//         decoded = jwt.verify(token, 'abc');
-//     } catch (err) {
-//         return res.status(401).json({ error: 'Invalid token' });
-//     }
-//     const userId = decoded.userId;
-//     const { email, password_hash, role, locked } = req.body;
-
-//     const fields = [];
-//     const values = [];
-
-//     if (email !== undefined) {
-//         fields.push('email = ?');
-//         values.push(email);
-//     }
-//     if (password_hash !== undefined) {
-//         fields.push('password_hash = ?');
-//         values.push(password_hash);
-//     }
-//     if (role !== undefined) {
-//         if (!VALID_ROLES.has(role)) {
-//             return badRequest(res, 'role must be ANALYST or MANAGER');
-//         }
-//         fields.push('role = ?');
-//         values.push(role);
-//     }
-//     if (locked !== undefined) {
-//         const normalizedLocked = normalizeLocked(locked);
-//         if (normalizedLocked === null) {
-//             return badRequest(res, 'locked must be 0/1 or boolean');
-//         }
-//         fields.push('locked = ?');
-//         values.push(normalizedLocked);
-//     }
-
-//     if (fields.length === 0) {
-//         return badRequest(res, 'No fields provided for update');
-//     }
-
-//     values.push(userId);
-//     const sql = `UPDATE users SET ${fields.join(', ')} WHERE id = ?`;
-
-//     db.run(sql, values, function (err) {
-//         if (err) return res.status(500).json({ error: err.message });
-//         if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
-//         res.json({ updatedID: userId });
-//     });
-// });
 
 // Request reset password
 router.post('/forgotpassword', (req, res) => {
@@ -329,13 +279,13 @@ router.post('/forgotpassword', (req, res) => {
 // Handle reset password
 router.post('/resetpassword/:token', (req, res) => {
     const resetToken = req.params.token;
-    const { password_hash } = req.body;
+    const { password } = req.body;
 
     if (!resetToken) {
         return badRequest(res, 'reset token is required');
     }
-    if (!password_hash) {
-        return badRequest(res, 'password_hash is required');
+    if (!password) {
+        return badRequest(res, 'password is required');
     }
 
     const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
@@ -366,7 +316,7 @@ router.post('/resetpassword/:token', (req, res) => {
                 `UPDATE users
                 SET password_hash = ?, reset_token = NULL, reset_token_expires_at = NULL
                 WHERE id = ?`,
-                [password_hash, user.id],
+                [password, user.id],
                 function (updateErr) {
                     if (updateErr) return res.status(500).json({ error: updateErr.message });
                     if (this.changes === 0) return res.status(404).json({ error: 'User not found' });

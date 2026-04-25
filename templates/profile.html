@@ -884,10 +884,6 @@
         const formData = new FormData(event.currentTarget);
         const payload = Object.fromEntries(formData.entries());
 
-        if (!payload.password_hash) {
-            delete payload.password_hash;
-        }
-
         try {
             const response = await fetch('/api/user/profile', {
                 method: 'PUT',
@@ -911,9 +907,27 @@
         }
     });
 
-    function logout() {
-        document.cookie = "auth_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-        window.location.href = '/login';
+    async function logout() {
+        try {
+            const response = await fetch('/api/user/logout', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                alert(result.error || 'Unable to logout.');
+                return;
+            }
+
+            window.location.href = '/login';
+        } catch (error) {
+            console.error('Logout error:', error);
+        }
+
     }
 
     function goToForgotPassword() {

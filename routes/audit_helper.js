@@ -27,16 +27,16 @@ export function logAudit({ req, userId = null, action, resource = null, resource
         ? null
         : String(resourceId);
 
-    db.run(
-        `
-            INSERT INTO audit_logs (user_id, action, resource, resource_id, ip_address)
-            VALUES (?, ?, ?, ?, ?)
-        `,
-        [userId, action, resource, resourceIdValue, getClientIp(req)],
-        (err) => {
-            if (err) {
-                console.error('Audit log insert failed:', err.message);
-            }
-        }
-    );
+    // db.run(
+    //     `
+    //         INSERT INTO audit_logs (user_id, action, resource, resource_id, ip_address)
+    //         VALUES (?, ?, ?, ?, ?)
+    //     `,
+    //     [userId, action, resource, resourceIdValue, getClientIp(req)],
+    //     (err) => {
+    //         if (err) {
+    //             console.error('Audit log insert failed:', err.message);
+    //         }
+    //     }
+    // );
 }
