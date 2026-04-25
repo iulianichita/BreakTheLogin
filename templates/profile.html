@@ -229,6 +229,20 @@
             color: var(--text-color);
         }
 
+        .ticket-search {
+            border: 1px solid #d9def0;
+            border-radius: 10px;
+            padding: 0.5rem 0.8rem;
+            font: inherit;
+            background: white;
+            color: var(--text-color);
+            min-width: 220px;
+        }
+
+        .ticket-search::placeholder {
+            color: #97a0bd;
+        }
+
         .filter-reset-btn {
             border: 1px solid #ccd3eb;
             background: white;
@@ -416,6 +430,14 @@
             <h3>My Tickets</h3>
             <div class="tickets-tools">
                 <div class="ticket-filters" id="ticketFilters">
+                    <input
+                        id="ticketSearch"
+                        class="ticket-search"
+                        type="search"
+                        placeholder="Search after title"
+                        aria-label="Search tickets"
+                        oninput="applyTicketFilters()"
+                    >
                     <select id="statusFilter" onchange="applyTicketFilters()" aria-label="Filter by status">
                         <option value="">All statuses</option>
                         <option value="OPEN">Open</option>
@@ -569,6 +591,9 @@
                     });
                 document.getElementById('ownerHeader').style.display = managerMode ? '' : 'none';
                 document.getElementById('managerActions').style.display = managerMode ? 'flex' : 'none';
+                document.getElementById('ticketSearch').placeholder = managerMode
+                    ? 'Search after owner/title'
+                    : 'Search after title';
                 const loadingCell = document.getElementById('ticketsLoadingCell');
 
                 if (loadingCell) {
@@ -698,10 +723,15 @@
     }
 
     function buildTicketFilterQuery() {
+        const searchInput = document.getElementById('ticketSearch');
+        const search = searchInput ? searchInput.value.trim() : '';
         const status = document.getElementById('statusFilter').value;
         const severity = document.getElementById('severityFilter').value;
         const query = new URLSearchParams();
 
+        if (search) {
+            query.set('search', search);
+        }
         if (status) {
             query.set('status', status);
         }
@@ -718,6 +748,10 @@
     }
 
     function resetTicketFilters() {
+        const searchInput = document.getElementById('ticketSearch');
+        if (searchInput) {
+            searchInput.value = '';
+        }
         document.getElementById('statusFilter').value = '';
         document.getElementById('severityFilter').value = '';
         loadTickets();
@@ -731,7 +765,7 @@
             const tbody = document.getElementById('ticketsBody');
             tbody.innerHTML = '';
 
-            // Daca tickets nu este un array, il transformam intr-unul sau afisam mesaj
+            // Daca tickets nu este un array afisam mesaj
             if (!Array.isArray(tickets)) {
                 console.error("Expected array but got:", tickets);
                 tbody.innerHTML = `<tr><td colspan="${managerMode ? 6 : 5}" style="text-align:center;">Error loading tickets or no tickets found.</td></tr>`;
