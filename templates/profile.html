@@ -385,7 +385,7 @@
         <div class="profile-top">
             <h2>User Profile</h2>
             <div class="profile-actions">
-                <button class="edit-profile-btn" onclick="openProfileEditModal()">Edit Profile</button>
+                <button id="editProfileBtn" class="edit-profile-btn" onclick="openProfileEditModal()">Edit Profile</button>
                 <button class="logout-btn" onclick="logout()">Logout</button>
                 <button class="delete-account-btn" onclick="deleteAccount()">Delete Account</button>
             </div>
@@ -533,7 +533,7 @@
         <form class="ticket-form" id="editProfileForm">
             <div class="form-group">
                 <label for="profileEmail">Email</label>
-                <input id="profileEmail" name="email" type="email" required>
+                <input id="profileEmail" name="email" type="text" required>
             </div>
             <button type="button" class="forgot-password-btn" onclick="goToForgotPassword()">Click here to reset password</button>
             <div class="form-actions">
@@ -569,14 +569,21 @@
                     });
                 document.getElementById('ownerHeader').style.display = managerMode ? '' : 'none';
                 document.getElementById('managerActions').style.display = managerMode ? 'flex' : 'none';
-                document.getElementById('ticketsLoadingCell').colSpan = managerMode ? 6 : 5;
+                const loadingCell = document.getElementById('ticketsLoadingCell');
+
+                if (loadingCell) {
+                    const isManager = document.getElementById('ownerHeader').style.display !== 'none';
+                    loadingCell.colSpan = isManager ? 6 : 5;
+                }
 
                 if (managerMode) {
                     await loadAssignees();
+                    await loadAuditLogs();
+                } else {
+                    document.getElementById('auditCard').style.display = 'none';
                 }
-                
-                loadTickets(managerMode);
-                loadAuditLogs();
+
+                loadTickets();
             } else {
                 window.location.href = '/login';
             }
@@ -628,20 +635,33 @@
         }
 
         const modal = document.getElementById('ticketModalBackdrop');
+        modal.removeAttribute('inert');
         modal.style.display = 'flex';
         modal.setAttribute('aria-hidden', 'false');
     }
 
     function closeTicketModal() {
         const modal = document.getElementById('ticketModalBackdrop');
+        const editButton = document.getElementById('editProfileBtn');
+
+        document.getElementById('createTicketForm').reset();
+
+        // mutam focusul inapoi pe pagina principala
+        if (editButton) {
+            editButton.focus();
+        }
+
         modal.style.display = 'none';
         modal.setAttribute('aria-hidden', 'true');
-        document.getElementById('createTicketForm').reset();
+        modal.setAttribute('inert', '');
+        
         document.getElementById('ticketId').value = '';
         document.getElementById('ticketModalTitle').textContent = 'Create Ticket';
         document.getElementById('ticketSeverity').value = 'LOW';
         document.getElementById('ticketStatus').value = 'OPEN';
         editingTicketId = null;
+        
+        loadAuditLogs();
     }
 
     function openProfileEditModal() {
@@ -653,15 +673,28 @@
         document.getElementById('profileEmail').value = currentUser.email;
 
         const modal = document.getElementById('profileModalBackdrop');
+        modal.removeAttribute('inert');
         modal.style.display = 'flex';
         modal.setAttribute('aria-hidden', 'false');
     }
 
     function closeProfileEditModal() {
         const modal = document.getElementById('profileModalBackdrop');
+        const editButton = document.getElementById('editProfileBtn');
+
+        // resetam formularul
+        document.getElementById('editProfileForm').reset();
+
+        // mutam focusul inapoi pe pagina principala
+        if (editButton) {
+            editButton.focus();
+        }
+
         modal.style.display = 'none';
         modal.setAttribute('aria-hidden', 'true');
-        document.getElementById('editProfileForm').reset();
+        
+        modal.setAttribute('inert', '');
+        loadAuditLogs();
     }
 
     function buildTicketFilterQuery() {
@@ -776,11 +809,14 @@
 
     async function loadAuditLogs() {
         const auditCard = document.getElementById('auditCard');
-        if (!managerMode)
+        if (!managerMode) {
             auditCard.style.display = 'none';
+            return;
+        }
+
+        auditCard.style.display = '';
 
         const tbody = document.getElementById('auditBody');
-                loadTickets();
         tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Loading audit logs...</td></tr>';
 
         try {
@@ -957,7 +993,7 @@
                 return;
             }
 
-            logout();
+            window.location.href = '/login';
         } catch (error) {
             console.error('Delete account error:', error);
         }

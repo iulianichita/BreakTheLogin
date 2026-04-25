@@ -85,10 +85,10 @@ router.post('/login', (req, res) => {
                 { expiresIn: '30d' }
             );
 
-            res.cookie('auth_token', token, { 
+            res.cookie('auth_token', token, {
                 httpOnly: false,            // permite furtul prin XSS (JS poate citi cookie-ul)
                 secure: false,              // merge pe HTTP
-                maxAge: 365 * 24 * 60 * 60  // expirare peste 1 an
+                maxAge: 365 * 24 * 60 * 60 * 1000 // expirare peste 1 an
             });
 
             logAudit({
@@ -115,7 +115,7 @@ router.post('/login', (req, res) => {
 
 });
 
-router.post('logout', (req, res) => {
+router.post('/logout', (req, res) => {
     const token = req.cookies.auth_token;
 
     if (!token) return res.status(401).json({ error: "Login required" });
@@ -123,13 +123,21 @@ router.post('logout', (req, res) => {
     try {
         const decoded = jwt.verify(token, 'abc');
 
-        db.get('SELECT id, email  FROM users WHERE id = ?', [decoded.userId], async (err, user) => {
+        db.get('SELECT id, email FROM users WHERE id = ?', [decoded.userId], async (err, user) => {
             if (err) return res.status(500).json({ error: err.message });
             if (!user) return res.status(404).json({ error: 'User not found' });
 
             res.clearCookie('auth_token', {
                 httpOnly: false,
                 secure: false,
+            });
+
+            logAudit({
+                req,
+                userId: user.id,
+                action: 'LOGOUT_SUCCES',
+                resource: 'users',
+                resourceId: user.id
             });
 
             res.json({message: "Logout successfully!"});
@@ -354,6 +362,11 @@ router.delete('/:id', (req, res) => {
         db.run('DELETE FROM users WHERE id = ?', [userId], function (err) {
             if (err) return res.status(500).json({ error: err.message });
             if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
+
+            res.clearCookie('auth_token', {
+                httpOnly: false,
+                secure: false,
+            });
 
             logAudit({
                 req,
