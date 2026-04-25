@@ -229,14 +229,18 @@
             color: var(--text-color);
         }
 
-        .ticket-filters input {
+        .ticket-search {
             border: 1px solid #d9def0;
             border-radius: 10px;
-            padding: 0.5rem 0.7rem;
+            padding: 0.5rem 0.8rem;
             font: inherit;
             background: white;
             color: var(--text-color);
             min-width: 220px;
+        }
+
+        .ticket-search::placeholder {
+            color: #97a0bd;
         }
 
         .filter-reset-btn {
@@ -395,7 +399,7 @@
         <div class="profile-top">
             <h2>User Profile</h2>
             <div class="profile-actions">
-                <button class="edit-profile-btn" id="editProfileBtn" onclick="openProfileEditModal()">Edit Profile</button>
+                <button id="editProfileBtn" class="edit-profile-btn" onclick="openProfileEditModal()">Edit Profile</button>
                 <button class="logout-btn" onclick="logout()">Logout</button>
                 <button class="delete-account-btn" onclick="deleteAccount()">Delete Account</button>
             </div>
@@ -426,7 +430,14 @@
             <h3>My Tickets</h3>
             <div class="tickets-tools">
                 <div class="ticket-filters" id="ticketFilters">
-                    <input id="ticketSearch" type="text" placeholder="Search title, description, owner" oninput="applyTicketFilters()" aria-label="Search tickets">
+                    <input
+                        id="ticketSearch"
+                        class="ticket-search"
+                        type="search"
+                        placeholder="Search after title"
+                        aria-label="Search tickets"
+                        oninput="applyTicketFilters()"
+                    >
                     <select id="statusFilter" onchange="applyTicketFilters()" aria-label="Filter by status">
                         <option value="">All statuses</option>
                         <option value="OPEN">Open</option>
@@ -580,6 +591,9 @@
                     });
                 document.getElementById('ownerHeader').style.display = managerMode ? '' : 'none';
                 document.getElementById('managerActions').style.display = managerMode ? 'flex' : 'none';
+                document.getElementById('ticketSearch').placeholder = managerMode
+                    ? 'Search after owner/title'
+                    : 'Search after title';
                 const loadingCell = document.getElementById('ticketsLoadingCell');
 
                 if (loadingCell) {
@@ -589,10 +603,12 @@
 
                 if (managerMode) {
                     await loadAssignees();
+                    await loadAuditLogs();
+                } else {
+                    document.getElementById('auditCard').style.display = 'none';
                 }
-                
-                loadTickets(managerMode);
-                loadAuditLogs();
+
+                loadTickets();
             } else {
                 window.location.href = '/login';
             }
@@ -644,20 +660,33 @@
         }
 
         const modal = document.getElementById('ticketModalBackdrop');
+        modal.removeAttribute('inert');
         modal.style.display = 'flex';
         modal.setAttribute('aria-hidden', 'false');
     }
 
     function closeTicketModal() {
         const modal = document.getElementById('ticketModalBackdrop');
+        const editButton = document.getElementById('editProfileBtn');
+
+        document.getElementById('createTicketForm').reset();
+
+        // mutam focusul inapoi pe pagina principala
+        if (editButton) {
+            editButton.focus();
+        }
+
         modal.style.display = 'none';
         modal.setAttribute('aria-hidden', 'true');
-        document.getElementById('createTicketForm').reset();
+        modal.setAttribute('inert', '');
+        
         document.getElementById('ticketId').value = '';
         document.getElementById('ticketModalTitle').textContent = 'Create Ticket';
         document.getElementById('ticketSeverity').value = 'LOW';
         document.getElementById('ticketStatus').value = 'OPEN';
         editingTicketId = null;
+        
+        loadAuditLogs();
     }
 
     function openProfileEditModal() {
@@ -669,6 +698,7 @@
         document.getElementById('profileEmail').value = currentUser.email;
 
         const modal = document.getElementById('profileModalBackdrop');
+        modal.removeAttribute('inert');
         modal.style.display = 'flex';
         modal.setAttribute('aria-hidden', 'false');
     }
@@ -689,10 +719,12 @@
         modal.setAttribute('aria-hidden', 'true');
         
         modal.setAttribute('inert', '');
+        loadAuditLogs();
     }
 
     function buildTicketFilterQuery() {
-        const search = document.getElementById('ticketSearch').value.trim();
+        const searchInput = document.getElementById('ticketSearch');
+        const search = searchInput ? searchInput.value.trim() : '';
         const status = document.getElementById('statusFilter').value;
         const severity = document.getElementById('severityFilter').value;
         const query = new URLSearchParams();
@@ -716,7 +748,10 @@
     }
 
     function resetTicketFilters() {
-        document.getElementById('ticketSearch').value = '';
+        const searchInput = document.getElementById('ticketSearch');
+        if (searchInput) {
+            searchInput.value = '';
+        }
         document.getElementById('statusFilter').value = '';
         document.getElementById('severityFilter').value = '';
         loadTickets();
@@ -730,7 +765,7 @@
             const tbody = document.getElementById('ticketsBody');
             tbody.innerHTML = '';
 
-            // Daca tickets nu este un array, il transformam intr-unul sau afisam mesaj
+            // Daca tickets nu este un array afisam mesaj
             if (!Array.isArray(tickets)) {
                 console.error("Expected array but got:", tickets);
                 tbody.innerHTML = `<tr><td colspan="${managerMode ? 6 : 5}" style="text-align:center;">Error loading tickets or no tickets found.</td></tr>`;
@@ -808,13 +843,14 @@
 
     async function loadAuditLogs() {
         const auditCard = document.getElementById('auditCard');
-        if (!managerMode){
+        if (!managerMode) {
             auditCard.style.display = 'none';
             return;
         }
 
+        auditCard.style.display = '';
+
         const tbody = document.getElementById('auditBody');
-        // loadTickets();
         tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Loading audit logs...</td></tr>';
 
         try {
@@ -941,9 +977,27 @@
         }
     });
 
-    function logout() {
-        document.cookie = "auth_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-        window.location.href = '/login';
+    async function logout() {
+        try {
+            const response = await fetch('/api/user/logout', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                alert(result.error || 'Unable to logout.');
+                return;
+            }
+
+            window.location.href = '/login';
+        } catch (error) {
+            console.error('Logout error:', error);
+        }
+
     }
 
     function goToForgotPassword() {
@@ -973,7 +1027,7 @@
                 return;
             }
 
-            logout();
+            window.location.href = '/login';
         } catch (error) {
             console.error('Delete account error:', error);
         }

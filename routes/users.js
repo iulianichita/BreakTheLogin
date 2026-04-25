@@ -22,11 +22,11 @@ function badRequest(res, message) {
 
 // Create user
 router.post('/register', (req, res) => {
-    const { email, password_hash, role, locked } = req.body;
+    const { email, password, role, locked } = req.body;
     const normalizedLocked = normalizeLocked(locked ?? 0);
 
-    if (!email || !password_hash || !role) {
-        return badRequest(res, 'email, password_hash and role are required');
+    if (!email || !password || !role) {
+        return badRequest(res, 'email, password and role are required');
     }
     if (!VALID_ROLES.has(role)) {
         return badRequest(res, 'role must be ANALYST or MANAGER');
@@ -37,7 +37,7 @@ router.post('/register', (req, res) => {
 
     const sql = 'INSERT INTO users (email, password_hash, role, locked) VALUES (?, ?, ?, ?)';
 
-    db.run(sql, [email, password_hash, role, normalizedLocked], function (err) {
+    db.run(sql, [email, password, role, normalizedLocked], function (err) {
         if (err) return res.status(500).json({ error: err.message });
 
         logAudit({
@@ -59,7 +59,7 @@ router.post('/register', (req, res) => {
 
 // Login
 router.post('/login', (req, res) => {
-    const { email, password_hash } = req.body;
+    const { email, password } = req.body;
     
     db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
         if (err) return res.status(500).json({ error: err.message });
@@ -75,7 +75,7 @@ router.post('/login', (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
 
-        const match = password_hash == user.password_hash;
+        const match = password == user.password_hash;
         
         if (match) {
             const payload = { userId: user.id, manager: user.role === "MANAGER"? true : false };
@@ -85,10 +85,10 @@ router.post('/login', (req, res) => {
                 { expiresIn: '30d' }
             );
 
-            res.cookie('auth_token', token, { 
+            res.cookie('auth_token', token, {
                 httpOnly: false,            // permite furtul prin XSS (JS poate citi cookie-ul)
                 secure: false,              // merge pe HTTP
-                maxAge: 365 * 24 * 60 * 60  // expirare peste 1 an
+                maxAge: 365 * 24 * 60 * 60 * 1000 // expirare peste 1 an
             });
 
             logAudit({
@@ -113,6 +113,39 @@ router.post('/login', (req, res) => {
         }
     });
 
+});
+
+router.post('/logout', (req, res) => {
+    const token = req.cookies.auth_token;
+
+    if (!token) return res.status(401).json({ error: "Login required" });
+
+    try {
+        const decoded = jwt.verify(token, 'abc');
+
+        db.get('SELECT id, email FROM users WHERE id = ?', [decoded.userId], async (err, user) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!user) return res.status(404).json({ error: 'User not found' });
+
+            res.clearCookie('auth_token', {
+                httpOnly: false,
+                secure: false,
+            });
+
+            logAudit({
+                req,
+                userId: user.id,
+                action: 'LOGOUT_SUCCES',
+                resource: 'users',
+                resourceId: user.id
+            });
+
+            res.json({message: "Logout successfully!"});
+        });
+
+    } catch (err) {
+        res.status(401).json({ error: "Invalid token" });
+    }
 });
 
 // Read
@@ -253,13 +286,13 @@ router.post('/forgotpassword', (req, res) => {
 // Handle reset password
 router.post('/resetpassword/:token', (req, res) => {
     const resetToken = req.params.token;
-    const { password_hash } = req.body;
+    const { password } = req.body;
 
     if (!resetToken) {
         return badRequest(res, 'reset token is required');
     }
-    if (!password_hash) {
-        return badRequest(res, 'password_hash is required');
+    if (!password) {
+        return badRequest(res, 'password is required');
     }
 
     const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
@@ -290,7 +323,7 @@ router.post('/resetpassword/:token', (req, res) => {
                 `UPDATE users
                 SET password_hash = ?, reset_token = NULL, reset_token_expires_at = NULL
                 WHERE id = ?`,
-                [password_hash, user.id],
+                [password, user.id],
                 function (updateErr) {
                     if (updateErr) return res.status(500).json({ error: updateErr.message });
                     if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
@@ -328,6 +361,11 @@ router.delete('/:id', (req, res) => {
         db.run('DELETE FROM users WHERE id = ?', [userId], function (err) {
             if (err) return res.status(500).json({ error: err.message });
             if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
+
+            res.clearCookie('auth_token', {
+                httpOnly: false,
+                secure: false,
+            });
 
             logAudit({
                 req,

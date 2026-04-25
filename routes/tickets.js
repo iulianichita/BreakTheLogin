@@ -129,7 +129,7 @@ router.get('/', (req, res) => {
                 queryParams.push(severityFilter);
             }
             if (searchFilter) {
-                sql += ' AND (LOWER(tickets.title) LIKE ? OR LOWER(COALESCE(tickets.description, \"\")) LIKE ? OR LOWER(COALESCE(users.email, \"\")) LIKE ?)';
+                sql += ' AND (LOWER(tickets.title) LIKE ? OR LOWER(COALESCE(users.email, \"\")) LIKE ?)';
                 const searchLike = `%${searchFilter.toLowerCase()}%`;
                 queryParams.push(searchLike, searchLike, searchLike);
             }
@@ -155,7 +155,7 @@ router.get('/', (req, res) => {
                 queryParams.push(severityFilter);
             }
             if (searchFilter) {
-                sql += ' AND (LOWER(title) LIKE ? OR LOWER(COALESCE(description, \"\")) LIKE ?)';
+                sql += ' AND (LOWER(title) LIKE ?';
                 const searchLike = `%${searchFilter.toLowerCase()}%`;
                 queryParams.push(searchLike, searchLike);
             }
