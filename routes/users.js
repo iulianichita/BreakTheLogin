@@ -297,12 +297,8 @@ router.post('/resetpassword/:token', (req, res) => {
 });
 
 // Delete user
-router.delete('/:id', authMiddleware, (req, res) => {
-    const userId = Number(req.params.id);
-
-    if (req.user.id !== userId) {
-        return res.status(403).json({ error: 'You can only delete your own account' });
-    }
+router.delete('/', authMiddleware, (req, res) => {
+    const userId = Number(req.user.id);
 
     db.run('DELETE FROM users WHERE id = ?', [userId], function (err) {
         if (err) return res.status(500).json({ error: 'Server error' });
@@ -316,7 +312,7 @@ router.delete('/:id', authMiddleware, (req, res) => {
             
             logAudit({
                 req,
-                userId,
+                userId: null,
                 action: 'ACCOUNT_DELETED',
                 resource: 'users',
                 resourceId: userId
