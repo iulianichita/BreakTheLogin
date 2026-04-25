@@ -2,6 +2,7 @@ import express from 'express';
 import db from '../database.js';
 import jwt from 'jsonwebtoken';
 import { logAudit } from './audit_helper.js';
+import 'dotenv/config';
 
 const router = express.Router();
 
@@ -21,7 +22,7 @@ router.post('/', (req, res) => {
 
     let decoded;
     try {
-        decoded = jwt.verify(token, 'abc');
+        decoded = jwt.verify(token, process.env.JWT_SECRET);
     } catch (err) {
         console.log('JWT error:', err.message);
         return res.status(401).json({ error: 'Invalid token' });
@@ -100,7 +101,7 @@ router.get('/', (req, res) => {
     }
 
     try {
-        const decoded = jwt.verify(token, 'abc');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
         if (decoded.manager == true){
             let sql = `
@@ -194,7 +195,7 @@ router.put('/:id', (req, res) => {
 
     let decoded;
     try {
-        decoded = jwt.verify(token, 'abc');
+        decoded = jwt.verify(token, process.env.JWT_SECRET);
     } catch (err) {
         return res.status(401).json({ error: 'Invalid token' });
     }
@@ -219,65 +220,65 @@ router.put('/:id', (req, res) => {
             return res.status(403).json({ error: 'Only managers can reassign tickets' });
         }
 
-    const { title, description, severity, status, owner_id } = req.body;
+        const { title, description, severity, status, owner_id } = req.body;
 
-    const fields = [];
-    const values = [];
+        const fields = [];
+        const values = [];
 
-    if (title !== undefined) {
-        fields.push('title = ?');
-        values.push(title);
-    }
-    if (description !== undefined) {
-        fields.push('description = ?');
-        values.push(description);
-    }
-    if (severity !== undefined) {
-        if (!VALID_SEVERITIES.has(severity)) {
-            return badRequest(res, 'severity must be LOW, MED or HIGH');
+        if (title !== undefined) {
+            fields.push('title = ?');
+            values.push(title);
         }
-        fields.push('severity = ?');
-        values.push(severity);
-    }
-    if (status !== undefined) {
-        if (!VALID_STATUSES.has(status)) {
-            return badRequest(res, 'status must be OPEN, IN_PROGRESS or RESOLVED');
+        if (description !== undefined) {
+            fields.push('description = ?');
+            values.push(description);
         }
-        fields.push('status = ?');
-        values.push(status);
-    }
-    if (owner_id !== undefined) {
-        const ownerIdValue = owner_id === null ? null : Number(owner_id);
-        if (ownerIdValue !== null && Number.isNaN(ownerIdValue)) {
-            return badRequest(res, 'owner_id must be a number or null');
+        if (severity !== undefined) {
+            if (!VALID_SEVERITIES.has(severity)) {
+                return badRequest(res, 'severity must be LOW, MED or HIGH');
+            }
+            fields.push('severity = ?');
+            values.push(severity);
         }
-        fields.push('owner_id = ?');
-        values.push(ownerIdValue);
-    }
+        if (status !== undefined) {
+            if (!VALID_STATUSES.has(status)) {
+                return badRequest(res, 'status must be OPEN, IN_PROGRESS or RESOLVED');
+            }
+            fields.push('status = ?');
+            values.push(status);
+        }
+        if (owner_id !== undefined) {
+            const ownerIdValue = owner_id === null ? null : Number(owner_id);
+            if (ownerIdValue !== null && Number.isNaN(ownerIdValue)) {
+                return badRequest(res, 'owner_id must be a number or null');
+            }
+            fields.push('owner_id = ?');
+            values.push(ownerIdValue);
+        }
 
-    if (fields.length === 0) {
-        return badRequest(res, 'No fields provided for update');
-    }
+        if (fields.length === 0) {
+            return badRequest(res, 'No fields provided for update');
+        }
 
-    fields.push('updated_at = CURRENT_TIMESTAMP');
-    values.push(ticketId);
+        fields.push('updated_at = CURRENT_TIMESTAMP');
+        values.push(ticketId);
 
-    const sql = `UPDATE tickets SET ${fields.join(', ')} WHERE id = ?`;
+        const sql = `UPDATE tickets SET ${fields.join(', ')} WHERE id = ?`;
 
-    db.run(sql, values, function (err) {
-        if (err) return res.status(500).json({ error: err.message });
-        if (this.changes === 0) return res.status(404).json({ error: 'Ticket not found' });
+        db.run(sql, values, function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            if (this.changes === 0) return res.status(404).json({ error: 'Ticket not found' });
 
-        logAudit({
-            req,
-            userId: decoded.userId,
-            action: 'TICKET_UPDATED',
-            resource: 'tickets',
-            resourceId: ticketId
+            logAudit({
+                req,
+                userId: decoded.userId,
+                action: 'TICKET_UPDATED',
+                resource: 'tickets',
+                resourceId: ticketId
+            });
+
+            res.json({ updatedID: ticketId });
         });
-
-        res.json({ updatedID: ticketId });
-    });
     });
 });
 
@@ -286,14 +287,12 @@ router.delete('/:id', (req, res) => {
     const ticketId = Number(req.params.id);
     const token = req.cookies.auth_token;
 
-    let actorUserId = null;
-    if (token) {
-        try {
-            const decoded = jwt.verify(token, 'abc');
-            actorUserId = decoded.userId;
-        } catch (err) {
-            actorUserId = null;
-        }
+    if (!token) return res.status(401).json({ error: 'Login required' });
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+        actorUserId = null;
     }
 
     db.run('DELETE FROM tickets WHERE id = ?', [ticketId], function (err) {
@@ -302,7 +301,7 @@ router.delete('/:id', (req, res) => {
 
         logAudit({
             req,
-            userId: actorUserId,
+            userId: decoded.userId,
             action: 'TICKET_DELETED',
             resource: 'tickets',
             resourceId: ticketId
