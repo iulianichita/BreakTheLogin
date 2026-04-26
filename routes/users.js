@@ -9,7 +9,7 @@ import { authMiddleware } from './authMiddleware.js';
 const router = express.Router();
 const saltRounds = 10;
 const MAX_FAILED_LOGIN_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
-const VALID_ROLES = new Set(['USER', 'MANAGER']);
+const VALID_ROLES = new Set(['ANALYST', 'MANAGER']);
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[.,;:?!*+@#$%\-]).{8,}$/;
 
@@ -46,7 +46,7 @@ router.post('/register', async (req, res) => {
 
     const roleValue = role.trim().toUpperCase();
     if (!VALID_ROLES.has(roleValue)) {
-        return badRequest(res, 'role must be USER or MANAGER');
+        return badRequest(res, 'role must be ANALYST or MANAGER');
     }
 
     if (!PASSWORD_REGEX.test(password)) {
