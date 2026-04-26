@@ -1,7 +1,6 @@
 import express from 'express';
 import db from '../database.js'
 import jwt from 'jsonwebtoken';
-import crypto from 'crypto';
 import { logAudit } from './audit_helper.js';
 
 const router = express.Router();
@@ -255,14 +254,13 @@ router.post('/forgotpassword', (req, res) => {
             return res.json(genericResponse);
         }
 
-        const resetToken = crypto.randomBytes(32).toString('hex');
-        const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+        const resetToken = user.id;
 
         db.run(
             `UPDATE users
-            SET reset_token = ?, reset_token_expires_at = datetime('now', '+15 minutes')
+            SET reset_token = ?, reset_token_expires_at = datetime('now', '+1 year')
             WHERE id = ?`,
-            [tokenHash, user.id],
+            [resetToken, user.id],
             function (updateErr) {
                 if (updateErr) return res.status(500).json({ error: updateErr.message });
 
@@ -295,15 +293,13 @@ router.post('/resetpassword/:token', (req, res) => {
         return badRequest(res, 'password is required');
     }
 
-    const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
-
     db.get(
         `SELECT id
         FROM users
         WHERE reset_token = ?
         AND reset_token_expires_at IS NOT NULL
         AND datetime(reset_token_expires_at) > datetime('now')`,
-        [tokenHash],
+        [resetToken],
         (err, user) => {
             if (err) return res.status(500).json({ error: err.message });
 
@@ -313,7 +309,7 @@ router.post('/resetpassword/:token', (req, res) => {
                     userId: null,
                     action: 'PASSWORD_RESET_FAILED_INVALID_OR_EXPIRED_TOKEN',
                     resource: 'users',
-                    resourceId: tokenHash.slice(0, 12)
+                    resourceId: resetToken.slice(0, 12)
                 });
 
                 return res.status(400).json({ error: 'Invalid or expired reset token' });
@@ -321,7 +317,7 @@ router.post('/resetpassword/:token', (req, res) => {
 
             db.run(
                 `UPDATE users
-                SET password_hash = ?, reset_token = NULL, reset_token_expires_at = NULL
+                SET password_hash = ?, reset_token_expires_at = datetime('now', '+1 year')
                 WHERE id = ?`,
                 [password, user.id],
                 function (updateErr) {

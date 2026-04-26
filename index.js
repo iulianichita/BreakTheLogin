@@ -41,29 +41,7 @@ app.get('/forgotpassword', (req, res) => {
 });
 
 app.get('/resetpassword/:token', (req, res) => {
-    const rawToken = req.params.token;
-
-    // Reset tokens are generated as 32 random bytes in hex format.
-    if (!/^[a-f0-9]{64}$/i.test(rawToken)) {
-        return res.status(404).send('Invalid or expired reset link.');
-    }
-
-    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-
-    db.get(
-        `SELECT id
-        FROM users
-        WHERE reset_token = ?
-        AND reset_token_expires_at IS NOT NULL
-        AND datetime(reset_token_expires_at) > datetime('now')`,
-        [tokenHash],
-        (err, user) => {
-            if (err) return res.status(500).send('Could not validate reset link.');
-            if (!user) return res.status(404).send('Invalid or expired reset link.');
-
-            res.sendFile(path.join(__dirname, './templates/resetpassword.html'));
-        }
-    );
+    res.sendFile(path.join(__dirname, './templates/resetpassword.html'));
 });
 
 app.get('/profile', (req, res) => {
