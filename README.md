@@ -17,9 +17,9 @@ Utilizatorii sunt înregistrați cu unul dintre următoarele roluri:
 
 ## Structura ramurilor
 
-Acest repository conține două ramuri principale cu scopuri educaționale:
+Acest repository conține două ramuri principale:
 
-- **`vulnerable-version`** — versiunea inițială a aplicației, care conține **vulnerabilități de securitate intenționate** (ex: SQL Injection, IDOR, lipsă autorizare etc.). Această ramură există pentru a demonstra cum *nu* trebuie scris codul.
+- **`vulnerable-version`** — versiunea inițială a aplicației, care conține **vulnerabilități de securitate intenționate** (ex: stocare în clar a parolelor, gestionare nesigură a sesiunilor, lipsă rate limiting pe login etc.). Această ramură există pentru a demonstra cum *nu* trebuie scris codul.
 - **`fixed-version`** — versiunea corectată, în care vulnerabilitățile au fost remediate urmând bunele practici de securitate.
 
 > ⚠️ `main` este identic cu `fixed-version`. Codul din `main` reprezintă versiunea sigură și funcțională a aplicației.
