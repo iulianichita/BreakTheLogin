@@ -21,8 +21,26 @@ db.serialize(() => {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         reset_token TEXT,
         reset_token_expires_at DATETIME,
+        failed_login_attempts INTEGER DEFAULT 0,
         locked INTEGER DEFAULT 00 CHECK(locked IN (0, 1))
     )`, (err) => { if (err) console.error('users:', err.message); });
+
+    db.all(`PRAGMA table_info(users)`, [], (err, columns) => {
+        if (err) {
+            console.error('users schema check:', err.message);
+            return;
+        }
+
+        const hasFailedAttempts = columns.some((column) => column.name === 'failed_login_attempts');
+        if (!hasFailedAttempts) {
+            db.run(
+                `ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0`,
+                (alterErr) => {
+                    if (alterErr) console.error('users migration failed_login_attempts:', alterErr.message);
+                }
+            );
+        }
+    });
         
     db.run(`CREATE TABLE IF NOT EXISTS tickets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

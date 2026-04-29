@@ -1,259 +1,268 @@
 import express from 'express';
 import db from '../database.js'
-import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import bcrypt from 'bcrypt';
+import 'dotenv/config';
 import { logAudit } from './audit_helper.js';
+import { authMiddleware } from './authMiddleware.js';
 
 const router = express.Router();
-
+const saltRounds = 10;
+const MAX_FAILED_LOGIN_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 5);
 const VALID_ROLES = new Set(['ANALYST', 'MANAGER']);
-
-function normalizeLocked(value) {
-    if (value === undefined) return undefined;
-    if (value === true || value === 1 || value === '1') return 1;
-    if (value === false || value === 0 || value === '0') return 0;
-    return null;
-}
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[.,;:?!*+@#$%\-]).{8,}$/;
 
 function badRequest(res, message) {
     return res.status(400).json({ error: message });
 }
 
+function isNonEmptyString(value) {
+    return typeof value === 'string' && value.trim() !== '';
+}
+
+function isValidEmail(email) {
+    return isNonEmptyString(email) && EMAIL_REGEX.test(email.trim());
+}
+
+const genericResponseInvalidCredentials = 'INVALID_CREDENTIALS';
 
 // Create user
-router.post('/register', (req, res) => {
-    const { email, password, role, locked } = req.body;
-    const normalizedLocked = normalizeLocked(locked ?? 0);
+router.post('/register', async (req, res) => {
+    const { email, password, role } = req.body;
 
-    if (!email || !password || !role) {
-        return badRequest(res, 'email, password and role are required');
+    if (!isNonEmptyString(email)) {
+        return badRequest(res, 'email is required');
     }
-    if (!VALID_ROLES.has(role)) {
+    if (!isValidEmail(email)) {
+        return badRequest(res, 'email format is invalid');
+    }
+    if (!isNonEmptyString(password)) {
+        return badRequest(res, 'password is required');
+    }
+    if (!isNonEmptyString(role)) {
+        return badRequest(res, 'role is required');
+    }
+
+    const roleValue = role.trim().toUpperCase();
+    if (!VALID_ROLES.has(roleValue)) {
         return badRequest(res, 'role must be ANALYST or MANAGER');
     }
-    if (normalizedLocked === null) {
-        return badRequest(res, 'locked must be 0/1 or boolean');
+
+    if (!PASSWORD_REGEX.test(password)) {
+        return badRequest(res, 'password must be at least 8 characters long and include: an uppercase letter, a lowercase letter, a digit and a special character (.,;:?!*+-@#$%)');
     }
 
-    const sql = 'INSERT INTO users (email, password_hash, role, locked) VALUES (?, ?, ?, ?)';
+    try {
+        const hash = await bcrypt.hash(password, saltRounds);
 
-    db.run(sql, [email, password, role, normalizedLocked], function (err) {
-        if (err) return res.status(500).json({ error: err.message });
+        const sql = 'INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)';
 
-        logAudit({
-            req,
-            userId: this.lastID,
-            action: 'USER_REGISTER',
-            resource: 'users',
-            resourceId: this.lastID
+        db.run(sql, [email.trim(), hash, roleValue], function (err) {
+            if (err) return res.status(500).json({ error: 'Server error' });
+
+            logAudit({
+                req,
+                userId: this.lastID,
+                action: 'USER_REGISTER',
+                resource: 'users',
+                resourceId: this.lastID
+            });
+
+            res.status(201).json({
+                id: this.lastID,
+                email: email.trim(),
+                role: roleValue
+            });
         });
-
-        res.status(201).json({
-            id: this.lastID,
-            email,
-            role,
-            locked: normalizedLocked
-        });
-    });
+    } catch (err) {
+        return res.status(500).json({ error: 'Encryption error' });
+    }
 });
 
 // Login
 router.post('/login', (req, res) => {
     const { email, password } = req.body;
-    
-    db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (!user) {
-            logAudit({
-                req,
-                userId: null,
-                action: 'LOGIN_FAILED_USER_NOT_FOUND',
-                resource: 'users',
-                resourceId: email ?? null
-            });
 
-            return res.status(404).json({ error: 'User not found' });
+    const genericErrorMessage = 'Invalid login data provided';
+
+    if (!isNonEmptyString(email)) {
+        return badRequest(res, 'email is required');
+    }
+    if (!isValidEmail(email)) {
+        return badRequest(res, 'email format is invalid');
+    }
+    if (!isNonEmptyString(password)) {
+        return badRequest(res, 'password is required');
+    }
+    
+    const normalizedEmail = email.trim();
+    
+    db.get('SELECT * FROM users WHERE email = ?', [normalizedEmail], async (err, user) => {
+        if (err) return res.status(500).json({ error: 'Server error' });
+        if (!user) return res.status(404).json({ error: genericErrorMessage });
+
+        if (user.locked === 1) {
+            return res.status(423).json({ error: 'Account locked after too many failed login attempts' });
         }
 
-        const match = password == user.password_hash;
-        
-        if (match) {
-            const payload = { userId: user.id, manager: user.role === "MANAGER"? true : false };
-            const token = jwt.sign(
-                payload, 
-                'abc', 
-                { expiresIn: '30d' }
-            );
+        try {
+            const match = await bcrypt.compare(password, user.password_hash);
+            
+            if (match) {
+                db.run(
+                    'UPDATE users SET failed_login_attempts = 0 WHERE id = ?',
+                    [user.id],
+                    (updateErr) => {
+                        if (updateErr) return res.status(500).json({ error: 'Server error' });
 
-            res.cookie('auth_token', token, {
-                httpOnly: false,            // permite furtul prin XSS (JS poate citi cookie-ul)
-                secure: false,              // merge pe HTTP
-                maxAge: 365 * 24 * 60 * 60 * 1000 // expirare peste 1 an
-            });
+                        req.session.userId = user.id;
+                        req.session.manager = user.role === "MANAGER";
 
-            logAudit({
-                req,
-                userId: user.id,
-                action: 'LOGIN_SUCCESS',
-                resource: 'users',
-                resourceId: user.id
-            });
+                        logAudit({
+                            req,
+                            userId: user.id,
+                            action: 'LOGIN_SUCCESS',
+                            resource: 'users',
+                            resourceId: user.id
+                        });
 
-            res.json({ success: true, message: "Authentication successful" });
-        } else {
-            logAudit({
-                req,
-                userId: user.id,
-                action: 'LOGIN_FAILED_WRONG_PASSWORD',
-                resource: 'users',
-                resourceId: user.id
-            });
+                        res.json({ success: true, message: "Authentication successful" });
+                    }
+                );
+            } else {
+                const nextFailedAttempts = (user.failed_login_attempts || 0) + 1;
+                const shouldLock = nextFailedAttempts >= MAX_FAILED_LOGIN_ATTEMPTS;
 
-            res.status(401).json({ error: 'Incorrect password' });
+                db.run(
+                    'UPDATE users SET failed_login_attempts = ?, locked = ? WHERE id = ?',
+                    [nextFailedAttempts, shouldLock ? 1 : 0, user.id],
+                    (updateErr) => {
+                        if (updateErr) return res.status(500).json({ error: 'Server error' });
+
+                        logAudit({
+                            req,
+                            userId: user.id,
+                            action: genericResponseInvalidCredentials,
+                            resource: 'users',
+                            resourceId: user.id
+                        });
+
+                        if (shouldLock) {
+                            return res.status(423).json({ error: 'Account locked after too many failed login attempts' });
+                        }
+
+                        return res.status(401).json({ error: genericErrorMessage });
+                    }
+                );
+            }
+        } catch (err) {
+            console.error('Error during password comparison:', err);
+            return res.status(500).json({ error: 'Internal server error' });
         }
     });
 
 });
 
-router.post('/logout', (req, res) => {
-    const token = req.cookies.auth_token;
+router.post('/logout', authMiddleware, (req, res) => {
+    const genericErrorMessage = 'Invalid data provided';
 
-    if (!token) return res.status(401).json({ error: "Login required" });
-
-    try {
-        const decoded = jwt.verify(token, 'abc');
-
-        db.get('SELECT id, email FROM users WHERE id = ?', [decoded.userId], async (err, user) => {
-            if (err) return res.status(500).json({ error: err.message });
-            if (!user) return res.status(404).json({ error: 'User not found' });
-
-            res.clearCookie('auth_token', {
-                httpOnly: false,
-                secure: false,
-            });
-
-            logAudit({
-                req,
-                userId: user.id,
-                action: 'LOGOUT_SUCCES',
-                resource: 'users',
-                resourceId: user.id
-            });
-
-            res.json({message: "Logout successfully!"});
-        });
-
-    } catch (err) {
-        res.status(401).json({ error: "Invalid token" });
-    }
-});
-
-// Read
-router.get('/profile', (req, res) => {
-    const token = req.cookies.auth_token;
-
-    if (!token) return res.status(401).json({ error: "Login required" });
-
-    try {
-        const decoded = jwt.verify(token, 'abc');
-
-        db.get('SELECT id, email, role, created_at FROM users WHERE id = ?', [decoded.userId], async (err, user) => {
-            if (err) return res.status(500).json({ error: err.message });
-            if (!user) return res.status(404).json({ error: 'User not found' });
-
-            res.json(user);
-        });
-
-    } catch (err) {
-        res.status(401).json({ error: "Invalid token" });
-    }
-});
-
-// Update current user profile
-router.put('/profile', (req, res) => {
-    const token = req.cookies.auth_token;
-
-    if (!token) return res.status(401).json({ error: 'Login required' });
-
-    let decoded;
-    try {
-        decoded = jwt.verify(token, 'abc');
-    } catch (err) {
-        return res.status(401).json({ error: 'Invalid token' });
-    }
-
-    const { email } = req.body;
-
-    if (!email) {
-        return badRequest(res, 'email cannot be empty');
-    }
-
-
-    db.run('UPDATE users SET email = ? WHERE id = ?', [email, decoded.userId], function (err) {
-        if (err) return res.status(500).json({ error: err.message });
-        if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
+    db.get('SELECT id, email FROM users WHERE id = ?', [req.user.id], async (err, user) => {
+        if (err) return res.status(500).json({ error: 'Server error' });
+        if (!user) return res.status(404).json({ error: genericErrorMessage });
 
         logAudit({
             req,
-            userId: decoded.userId,
-            action: 'ACCOUNT_UPDATED',
+            userId: user.id,
+            action: 'LOGOUT_SUCCES',
             resource: 'users',
-            resourceId: decoded.userId
+            resourceId: user.id
         });
 
-        res.json({ updatedID: decoded.userId });
+        req.session.destroy((sessionErr) => {
+            if (sessionErr) {
+                return res.status(500).json({ error: 'Server error' });
+            }
+            res.clearCookie('connect.sid');
+            return res.json({ message: 'Logout successfully!' });
+        });
+    });
+});
+
+// Read
+router.get('/profile', authMiddleware, (req, res) => {
+    const genericErrorMessage = 'Invalid data provided';
+
+    db.get('SELECT id, email, role, created_at FROM users WHERE id = ?', [req.user.id], async (err, user) => {
+        if (err) return res.status(500).json({ error: 'Server error' });
+        if (!user) return res.status(404).json({ error: genericErrorMessage });
+
+        res.json(user);
+    });
+
+});
+
+// Update current user profile
+router.put('/profile', authMiddleware, (req, res) => {
+    const genericErrorMessage = 'Invalid data provided';
+    const { email } = req.body;
+
+    if (!isNonEmptyString(email)) {
+        return badRequest(res, 'email is required');
+    }
+    if (!isValidEmail(email)) {
+        return badRequest(res, 'email format is invalid');
+    }
+
+    db.run('UPDATE users SET email = ? WHERE id = ?', [email.trim(), req.user.id], function (err) {
+        if (err) return res.status(500).json({ error: 'Server error' });
+        if (this.changes === 0) return res.status(404).json({ error: genericErrorMessage });
+
+        logAudit({
+            req,
+            userId: req.user.id,
+            action: 'ACCOUNT_UPDATED',
+            resource: 'users',
+            resourceId: req.user.id
+        });
+
+        res.json({ updatedID: req.user.id });
     });
 });
 
 // Manager-only user list for assigning tickets
-router.get('/assignees', (req, res) => {
-    const token = req.cookies.auth_token;
-
-    if (!token) return res.status(401).json({ error: 'Login required' });
-
-    try {
-        const decoded = jwt.verify(token, 'abc');
-
-        if (decoded.manager !== true) {
-            return res.status(403).json({ error: 'Only managers can view assignees' });
-        }
-
-        db.all('SELECT id, email, role FROM users ORDER BY email ASC', [], (err, users) => {
-            if (err) return res.status(500).json({ error: err.message });
-
-            res.json(users);
-        });
-    } catch (err) {
-        res.status(401).json({ error: 'Invalid token' });
+router.get('/assignees', authMiddleware, (req, res) => {
+    if (req.user.manager !== true) {
+        return res.status(403).json({ error: 'Only managers can view assignees' });
     }
+
+    db.all('SELECT id, email, role FROM users ORDER BY email ASC', [], (err, users) => {
+        if (err) return res.status(500).json({ error: 'Server error' });
+
+        res.json(users);
+    });
 });
 
 // Request forgot password
 router.post('/forgotpassword', (req, res) => {
     const { email } = req.body;
 
-    if (!email) {
-        return badRequest(res, 'Email is required');
+    if (!isNonEmptyString(email)) {
+        return badRequest(res, 'email is required');
     }
+    if (!isValidEmail(email)) {
+        return badRequest(res, 'email format is invalid');
+    }
+
+    const normalizedEmail = email.trim();
 
     const genericResponse = {
         message: 'If that email exists, a reset link has been generated.'
     };
 
-    db.get('SELECT id FROM users WHERE email = ?', [email], (err, user) => {
-        if (err) return res.status(500).json({ error: err.message });
-
-        if (!user) {
-            logAudit({
-                req,
-                userId: null,
-                action: 'PASSWORD_RESET_REQUESTED_UNKNOWN_EMAIL',
-                resource: 'users',
-                resourceId: email
-            });
-
-            return res.json(genericResponse);
-        }
+    db.get('SELECT id FROM users WHERE email = ?', [normalizedEmail], (err, user) => {
+        if (err) return res.status(500).json({ error: 'Server error' });
+        if (!user) return res.status(404).json({error : genericResponse});
 
         const resetToken = crypto.randomBytes(32).toString('hex');
         const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
@@ -264,7 +273,7 @@ router.post('/forgotpassword', (req, res) => {
             WHERE id = ?`,
             [tokenHash, user.id],
             function (updateErr) {
-                if (updateErr) return res.status(500).json({ error: updateErr.message });
+                if (updateErr) return res.status(500).json({ error: 'Server error' });
 
                 logAudit({
                     req,
@@ -288,10 +297,12 @@ router.post('/resetpassword/:token', (req, res) => {
     const resetToken = req.params.token;
     const { password } = req.body;
 
+    const genericErrorMessage = 'Invalid credentials';
+
     if (!resetToken) {
         return badRequest(res, 'reset token is required');
     }
-    if (!password) {
+    if (!isNonEmptyString(password)) {
         return badRequest(res, 'password is required');
     }
 
@@ -304,77 +315,65 @@ router.post('/resetpassword/:token', (req, res) => {
         AND reset_token_expires_at IS NOT NULL
         AND datetime(reset_token_expires_at) > datetime('now')`,
         [tokenHash],
-        (err, user) => {
-            if (err) return res.status(500).json({ error: err.message });
+        async (err, user) => {
+            if (err) return res.status(500).json({ error: 'Server error' });
+            if (!user) return res.status(404).json({ error: genericErrorMessage });
 
-            if (!user) {
-                logAudit({
-                    req,
-                    userId: null,
-                    action: 'PASSWORD_RESET_FAILED_INVALID_OR_EXPIRED_TOKEN',
-                    resource: 'users',
-                    resourceId: tokenHash.slice(0, 12)
-                });
-
-                return res.status(400).json({ error: 'Invalid or expired reset token' });
-            }
-
-            db.run(
-                `UPDATE users
-                SET password_hash = ?, reset_token = NULL, reset_token_expires_at = NULL
-                WHERE id = ?`,
-                [password, user.id],
-                function (updateErr) {
-                    if (updateErr) return res.status(500).json({ error: updateErr.message });
-                    if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
-
-                    res.clearCookie('auth_token', {
-                        httpOnly: false,
-                        secure: false,
-                    });
-
-                    logAudit({
-                        req,
-                        userId: user.id,
-                        action: 'PASSWORD_RESET_SUCCESS',
-                        resource: 'users',
-                        resourceId: user.id
-                    });
-
-                    res.json({ message: 'Password changed successfully' });
+            try {
+                if (!PASSWORD_REGEX.test(password)) {
+                    return badRequest(res, 'password must be at least 8 characters long and include: an uppercase letter, a lowercase letter, a digit and a special character (.,;:?!*+-@#$%)');
                 }
-            );
-        }
+
+                const hash = await bcrypt.hash(password, saltRounds);
+                db.run(
+                    `UPDATE users
+                    SET password_hash = ?, reset_token = NULL, reset_token_expires_at = NULL, failed_login_attempts = 0, locked = 0
+                    WHERE id = ?`,
+                    [hash, user.id],
+                    function (updateErr) {
+                        if (updateErr) return res.status(500).json({ error: 'Server error' });
+                        if (this.changes === 0) return res.status(404).json({ error: genericErrorMessage });
+
+                        logAudit({
+                            req,
+                            userId: user.id,
+                            action: 'PASSWORD_RESET_SUCCESS',
+                            resource: 'users',
+                            resourceId: user.id
+                        });
+
+                        res.json({ message: 'Password changed successfully' });
+                    }
+                );
+        
+            } catch (err) {
+                return res.status(500).json({ error: 'Encryption error' });
+            }
+    }
     );
 });
 
 // Delete user
-router.delete('/:id', (req, res) => {
-    const userId = Number(req.params.id);
+router.delete('/', authMiddleware, (req, res) => {
+    const userId = Number(req.user.id);
 
-    const token = req.cookies.auth_token;
+    if (Number.isNaN(userId)) {
+        return badRequest(res, 'id is required and must be a number');
+    }
 
-    if (!token) return res.status(401).json({ error: 'Login required' });
+    db.run('DELETE FROM users WHERE id = ?', [userId], function (err) {
+        if (err) return res.status(500).json({ error: 'Server error' });
+        if (this.changes === 0) return res.status(404).json({ error: 'Invalid credentials' });
 
-    try {
-        const decoded = jwt.verify(token, 'abc');
-
-        if (decoded.userId !== userId) {
-            return res.status(403).json({ error: 'You can only delete your own account' });
-        }
-
-        db.run('DELETE FROM users WHERE id = ?', [userId], function (err) {
-            if (err) return res.status(500).json({ error: err.message });
-            if (this.changes === 0) return res.status(404).json({ error: 'User not found' });
-
-            res.clearCookie('auth_token', {
-                httpOnly: false,
-                secure: false,
-            });
-
+        req.session.destroy((sessionErr) => {
+            if (sessionErr) {
+                return res.status(500).json({ error: 'Server error' });
+            }
+            res.clearCookie('connect.sid');
+            
             logAudit({
                 req,
-                userId: decoded.userId,
+                userId: null,
                 action: 'ACCOUNT_DELETED',
                 resource: 'users',
                 resourceId: userId
@@ -382,9 +381,7 @@ router.delete('/:id', (req, res) => {
 
             res.json({ deletedID: userId });
         });
-    } catch (err) {
-        res.status(401).json({ error: 'Invalid token' });
-    }
+    });
 });
 
 
