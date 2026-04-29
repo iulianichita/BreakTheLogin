@@ -4,5 +4,6 @@
 
 Raport/*
 !/Raport/main.pdf
+
 data.sqlite-shm
 data.sqlite-wal
